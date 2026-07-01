@@ -1,6 +1,7 @@
 import os
 import sys
 import locale
+import json
 
 # 修复Windows环境编码问题
 if sys.platform == "win32":
@@ -13,7 +14,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 from app.database import engine, Base
-from app.routers import auth, sessions
+from app.routers import auth, sessions, ai
 
 load_dotenv(encoding='utf-8')
 
@@ -41,8 +42,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+def parse_cors_origins(raw_origins: str) -> list[str]:
+    try:
+        parsed = json.loads(raw_origins)
+        if isinstance(parsed, list):
+            return [origin.strip() for origin in parsed if isinstance(origin, str) and origin.strip()]
+    except json.JSONDecodeError:
+        pass
+    return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+
 # CORS middleware
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+CORS_ORIGINS = parse_cors_origins(os.getenv("CORS_ORIGINS", "http://localhost:5173"))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -54,6 +65,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
+app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 
 @app.get("/")
 async def root():

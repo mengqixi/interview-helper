@@ -1,101 +1,244 @@
 import React, { useRef, useState } from 'react'
+import { message } from 'antd'
 import { useNavigate } from 'react-router-dom'
-import { useInterviewStore } from '@/store/interviewStore'
-import { createRtasrWebSocket, parseRtasrResult, setAudioActiveState, cleanupQuestionDetection } from '@/api/xfyunRtasr'
-import RecorderManager from '@/api/utils/xfyunRtasr/index.esm.js'
-import { isAudioActive } from '@/utils/voiceIdentifier'
-import { handleQuestionDetected } from '@/api/deepseek'
 import ReactMarkdown from 'react-markdown'
+import { chatWithDeepSeek, handleQuestionDetected } from '@/api/deepseek'
+import { createRtasrWebSocket, parseRtasrResult, setAudioActiveState, cleanupQuestionDetection } from '@/api/xfyunRtasr'
+import { useInterviewStore } from '@/store/interviewStore'
+import { isAudioActive } from '@/utils/voiceIdentifier'
+import { BrowserAudioRecorder } from '@/utils/browserAudioRecorder'
+import { buildStableSystemPrompt } from '@/utils/questionDetection'
+
+type AudioSource = 'meeting' | 'microphone'
 
 const InterviewMeeting: React.FC = () => {
   const navigate = useNavigate()
   const addTransResult = useInterviewStore(s => s.addTransResult)
   const addMessage = useInterviewStore(s => s.addMessage)
+  const upsertAnswer = useInterviewStore(s => s.upsertAnswer)
   const messages = useInterviewStore(s => s.messages)
   const answers = useInterviewStore(s => s.answers)
   const [recording, setRecording] = useState(false)
-  const wsRef = useRef<WebSocket | null>(null)
-  const recorderRef = useRef<any>(null)
   const [audioActive, setAudioActive] = useState(false)
-  
-  // 自动滚动到底部的引用
+  const [manualQuestion, setManualQuestion] = useState('')
+  const [recordingStatus, setRecordingStatus] = useState('Not recording')
+  const [audioSource, setAudioSource] = useState<AudioSource>('meeting')
+  const wsRef = useRef<WebSocket | null>(null)
+  const recorderRef = useRef<BrowserAudioRecorder | null>(null)
   const chatAreaRef = useRef<HTMLDivElement>(null)
-  const voiceAreaRef = useRef<HTMLDivElement>(null)
   const voiceContentRef = useRef<HTMLDivElement>(null)
+  const frameCountRef = useRef(0)
+  const sessionIdRef = useRef<string | null>(null)
+  const aiDebounceRef = useRef<number | null>(null)
+  const seenTranscriptRef = useRef<Set<string>>(new Set())
 
-  // 处理转写结果
+  const appendRecordingStatus = (status: string) => {
+    setRecordingStatus(previous => `${previous} -> ${status}`)
+  }
+
+  const scheduleQuestionDetection = () => {
+    if (aiDebounceRef.current) {
+      window.clearTimeout(aiDebounceRef.current)
+    }
+
+    aiDebounceRef.current = window.setTimeout(() => {
+      handleQuestionDetected()
+      aiDebounceRef.current = null
+    }, 1500)
+  }
+
   const handleRtasrResult = (data: any) => {
-    console.log('【data】', data)
-    if (data.action === 'result') {
-      if (data.code === '0') {
-        const parsedData = typeof data.data === 'string' ? JSON.parse(data.data) : data.data
-        addTransResult({
-          action: data.action,
-          code: data.code,
-          data: parsedData,
-          desc: data.desc,
-          sid: data.sid,
-        })
-        // 解析文本内容，集成智能AI问题检测
-        const msgs = parseRtasrResult(parsedData, () => handleQuestionDetected())
-        msgs.forEach(msg => {
-          addMessage(msg)
-          console.log('【MeetingMessage】', msg)
-        })
-      } else {
-        // TODO:错误处理
-        console.error('【转写错误】', data.desc)
+    if (data?.msg_type === 'action' && data?.data?.sessionId) {
+      sessionIdRef.current = data.data.sessionId
+      appendRecordingStatus('session ready')
+      return
+    }
+
+    if (data?.msg_type === 'result' && data?.res_type && data.res_type !== 'asr') {
+      const errorText = data?.data?.desc || 'Realtime transcription failed'
+      message.error(errorText)
+      console.error('RTASR error:', data)
+      return
+    }
+
+    if (data?.action && data.action !== 'result') return
+    if (data?.msg_type && data.msg_type !== 'result') return
+
+    if (data.code && data.code !== '0') {
+      message.error(data.desc || 'Realtime transcription failed')
+      console.error('RTASR error:', data)
+      return
+    }
+
+    const parsedData = typeof data.data === 'string' ? JSON.parse(data.data) : data.data
+    addTransResult({
+      action: data.action || data.msg_type || 'result',
+      code: data.code || '0',
+      data: parsedData,
+      desc: data.desc,
+      sid: data.sid || sessionIdRef.current || '',
+    })
+
+    const parsedMessages = parseRtasrResult(
+      parsedData,
+      undefined,
+      audioSource === 'meeting' ? 'asker' : 'user',
+    )
+    const newMessages = parsedMessages.filter((msg) => {
+      const key = `${msg.role}:${msg.content.trim()}`
+      if (!msg.content.trim() || seenTranscriptRef.current.has(key)) {
+        return false
       }
+      seenTranscriptRef.current.add(key)
+      return true
+    })
+
+    newMessages.forEach(msg => addMessage(msg))
+
+    if (newMessages.some(msg => msg.role === 'asker')) {
+      scheduleQuestionDetection()
     }
   }
 
-  // 开始面试
   const handleStart = async () => {
-    setRecording(true)
-    const recorder = new RecorderManager('/xfyunRtasr')
-    recorderRef.current = recorder
-    const ws = createRtasrWebSocket({
-      onResult: handleRtasrResult,
-      onError: () => setRecording(false),
-      onClose: () => setRecording(false),
-      onOpen: async () => {
-        // 只有 WebSocket 连接成功后才启动录音
-        recorder.onFrameRecorded = ({ isLastFrame, frameBuffer }: any) => {
-          const audioActiveState = isAudioActive(frameBuffer, 0.02)
-          setAudioActive(audioActiveState)
-          // 同步音频状态到问题检测系统
-          setAudioActiveState(audioActiveState)
-          
-          if (ws.readyState === ws.OPEN) {
-            ws.send(new Int8Array(frameBuffer))
-            if (isLastFrame) {
-              ws.send('{"end": true}')
-            }
+    try {
+      setRecordingStatus('Connecting to RTASR')
+      frameCountRef.current = 0
+      sessionIdRef.current = null
+      seenTranscriptRef.current.clear()
+      setRecording(true)
+      const recorder = new BrowserAudioRecorder()
+      recorderRef.current = recorder
+
+      const ws = createRtasrWebSocket({
+        onResult: handleRtasrResult,
+        onError: () => {
+          setRecording(false)
+          appendRecordingStatus('WebSocket error')
+          message.error('RTASR connection failed. Check Xfyun AppID/API Key and network.')
+        },
+        onClose: (event) => {
+          setRecording(false)
+          appendRecordingStatus(`closed ${event.code}${event.reason ? ` ${event.reason}` : ''}`)
+          if (event.code !== 1000) {
+            const reason = event.reason ? `: ${event.reason}` : ''
+            message.warning(`RTASR connection closed (${event.code})${reason}`)
           }
-        }
-        recorder.onStop = () => { }
-        await recorder.start({ sampleRate: 16000, frameSize: 1280 })
-      }
-    })
-    wsRef.current = ws
-  }
-  // 停止面试
-  const handleStop = () => {
-    setRecording(false)
-    recorderRef.current?.stop()
-    wsRef.current?.close()
-    // 清理问题检测相关资源
-    cleanupQuestionDetection()
+        },
+        onOpen: async () => {
+          try {
+            appendRecordingStatus('opened')
+            appendRecordingStatus(audioSource === 'meeting' ? 'requesting meeting audio' : 'requesting microphone')
+            recorder.onFrameRecorded = ({ isLastFrame, frameBuffer }: any) => {
+              frameCountRef.current += 1
+              if (frameCountRef.current === 1) {
+                appendRecordingStatus('first audio frame')
+              } else if (frameCountRef.current % 25 === 0) {
+                setRecordingStatus(previous => `${previous.split(' | ')[0]} | frames: ${frameCountRef.current}`)
+              }
+              const active = isAudioActive(frameBuffer, 0.02)
+              setAudioActive(active)
+              setAudioActiveState(active)
+
+              if (ws.readyState === ws.OPEN) {
+                if (frameBuffer.byteLength > 0) {
+                  ws.send(new Int8Array(frameBuffer))
+                }
+                if (isLastFrame) {
+                  ws.send(JSON.stringify(sessionIdRef.current ? { end: true, sessionId: sessionIdRef.current } : { end: true }))
+                }
+              }
+            }
+            recorder.onStop = () => {}
+            await recorder.start({ sampleRate: 16000, frameSize: 640, source: audioSource })
+            appendRecordingStatus(audioSource === 'meeting' ? 'meeting audio started' : 'microphone started')
+          } catch (err: any) {
+            setRecording(false)
+            const errorMessage = err?.message || (audioSource === 'meeting'
+              ? 'Meeting audio capture failed. Select a screen/window/tab and enable audio sharing.'
+              : 'Microphone capture failed. Please allow microphone access.')
+            appendRecordingStatus(errorMessage)
+            ws.close(4000, 'recorder-start-failed')
+            message.error(errorMessage)
+            console.error('Recorder start failed:', err)
+          }
+        },
+      })
+      wsRef.current = ws
+    } catch (err: any) {
+      setRecording(false)
+      setRecordingStatus(err?.message || 'Failed to start realtime transcription')
+      message.error(err?.message || 'Failed to start realtime transcription')
+      console.error('Start interview failed:', err)
+    }
   }
 
-  // 组件卸载时清理
+  const handleStop = () => {
+    setRecording(false)
+    appendRecordingStatus('stopped')
+    recorderRef.current?.stop()
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(sessionIdRef.current ? { end: true, sessionId: sessionIdRef.current } : { end: true }))
+    }
+    wsRef.current?.close()
+    cleanupQuestionDetection()
+    if (aiDebounceRef.current) {
+      window.clearTimeout(aiDebounceRef.current)
+      aiDebounceRef.current = null
+    }
+  }
+
+  const handleManualSend = async () => {
+    const content = manualQuestion.trim()
+    if (!content) return
+
+    addMessage({
+      content,
+      role: 'user',
+      status: 'sent',
+    })
+    setManualQuestion('')
+
+    try {
+      const response = await chatWithDeepSeek([
+        {
+          role: 'system',
+          content: buildStableSystemPrompt(),
+        },
+        {
+          role: 'user',
+          content,
+        },
+      ], { stream: false })
+      const answer = response.choices?.[0]?.message?.content || ''
+
+      if (!answer) {
+        throw new Error('AI response was empty')
+      }
+
+      upsertAnswer({
+        id: response.id || `manual-${Date.now()}`,
+        message: answer,
+        created: Date.now(),
+        question: content,
+      })
+    } catch (err: any) {
+      message.error(err?.message || 'AI request failed')
+      console.error('Manual question failed:', err)
+    }
+  }
+
   React.useEffect(() => {
     return () => {
       cleanupQuestionDetection()
+      if (aiDebounceRef.current) {
+        window.clearTimeout(aiDebounceRef.current)
+      }
+      recorderRef.current?.stop()
+      wsRef.current?.close()
     }
   }, [])
 
-  // 自动滚动到底部
   React.useEffect(() => {
     if (chatAreaRef.current) {
       chatAreaRef.current.scrollTop = chatAreaRef.current.scrollHeight
@@ -109,176 +252,112 @@ const InterviewMeeting: React.FC = () => {
   }, [messages])
 
   return (
-    <div style={{ 
-      width: '100%', 
-      height: '100vh', 
-      background: '#fff', 
-      display: 'flex', 
+    <div style={{
+      width: '100%',
+      height: '100vh',
+      background: '#fff',
+      display: 'flex',
       flexDirection: 'column',
-      overflow: 'hidden'
+      overflow: 'hidden',
     }}>
-      {/* 主内容区 */}
-      <div style={{ 
-        flex: 1, 
-        display: 'flex', 
-        flexDirection: 'row', 
-        overflow: 'hidden',
-        minHeight: 0 // 重要：允许flex子项收缩
-      }}>
-        {/* 聊天区：Q左A右分栏 */}
-        <div 
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', minHeight: 0 }}>
+        <div
           ref={chatAreaRef}
-          style={{ 
-            flex: 1, 
-            padding: 24, 
-            overflowY: 'auto', 
-            display: 'flex', 
-            flexDirection: 'column', 
-            gap: 16,
-            minHeight: 0 // 重要：允许滚动
-          }}
+          style={{ flex: 1, padding: 24, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}
         >
           {answers.length > 0 ? answers.map((ans, idx) => (
-            <div key={ans.id || idx} style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'flex-start', 
-              gap: 24,
-              minHeight: 'fit-content'
-            }}>
-              {/* Q 左侧 */}
-              <div style={{ 
-                flex: 1, 
-                background: '#f5f5f5', 
-                borderRadius: 8, 
-                padding: 12, 
-                textAlign: 'left', 
-                maxWidth: '30%',
-                minWidth: '200px'
-              }}>
+            <div key={ans.id || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 24, minHeight: 'fit-content' }}>
+              <div style={{ flex: 1, background: '#f5f5f5', borderRadius: 8, padding: 12, textAlign: 'left', maxWidth: '30%', minWidth: '200px' }}>
                 <b>Q:</b> {ans.question}
               </div>
-              {/* A 右侧 */}
-              <div style={{ 
-                flex: 2, 
-                background: '#e6f7ff', 
-                borderRadius: 8, 
-                padding: 12, 
-                textAlign: 'left'
-              }}>
+              <div style={{ flex: 2, background: '#e6f7ff', borderRadius: 8, padding: 12, textAlign: 'left' }}>
                 <b>A:</b> <ReactMarkdown>{ans.message}</ReactMarkdown>
               </div>
             </div>
           )) : (
-            <div style={{ 
-              fontSize: 32, 
-              color: '#eee', 
-              textAlign: 'center',
-              margin: 'auto'
-            }}>
-              暂无问答
+            <div style={{ fontSize: 32, color: '#ddd', textAlign: 'center', margin: 'auto' }}>
+              No answers yet
             </div>
           )}
         </div>
-        
-        {/* 语音区 */}
-        <div 
-          ref={voiceAreaRef}
-          style={{ 
-            width: 250, 
-            borderLeft: '1px solid #eee', 
-            padding: 16,
-            overflowY: 'auto',
-            minHeight: 0, // 重要：允许滚动
-            display: 'flex',
-            flexDirection: 'column'
-          }}
-        >
-          <h3 style={{ margin: '0 0 16px 0', fontSize: 16, color: '#666', flexShrink: 0 }}>实时转录</h3>
+
+        <div style={{ width: 250, borderLeft: '1px solid #eee', padding: 16, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <h3 style={{ margin: '0 0 16px 0', fontSize: 16, color: '#666', flexShrink: 0 }}>Live transcript</h3>
           <div ref={voiceContentRef} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {messages.map((msg, idx) => (
-              <div key={msg.id || idx} style={{ 
-                marginBottom: 8, 
-                background: msg.role === 'user' ? '#f0f8ff' : '#f5f5f5', 
-                borderRadius: 8, 
-                padding: 8,
-                fontSize: 12,
-                lineHeight: 1.4
-              }}>
-                <b style={{ color: msg.role === 'user' ? '#1677ff' : '#666' }}>
-                  {msg.role === 'user' ? '用户' : '助手'}：
-                </b>
+              <div key={msg.id || idx} style={{ marginBottom: 8, background: msg.role === 'user' ? '#f0f8ff' : '#f5f5f5', borderRadius: 8, padding: 8, fontSize: 12, lineHeight: 1.4 }}>
+                <b style={{ color: msg.role === 'user' ? '#1677ff' : '#722ed1' }}>
+                  {msg.role === 'user' ? 'Me' : 'Interviewer'}:
+                </b>{' '}
                 {msg.content}
               </div>
             ))}
           </div>
         </div>
       </div>
-      
-      {/* 底部操作栏 - 固定在屏幕底部 */}
-      <div style={{ 
-        height: '80px',
-        borderTop: '1px solid #eee', 
-        padding: '16px 24px', 
-        display: 'flex', 
-        alignItems: 'center', 
+
+      <div style={{
+        height: '96px',
+        borderTop: '1px solid #eee',
+        padding: '12px 24px',
+        display: 'flex',
+        alignItems: 'center',
         justifyContent: 'space-between',
         background: '#fff',
         boxShadow: '0 -2px 8px rgba(0, 0, 0, 0.1)',
-        flexShrink: 0
+        flexShrink: 0,
+        overflow: 'hidden',
       }}>
-        <div style={{ fontSize: 12, color: '#666' }}>
-          帮助中心<br />
+        <div style={{ width: 300, minWidth: 300, fontSize: 12, color: '#666', overflow: 'hidden' }}>
+          Help center<br />
+          <span
+            title={recordingStatus}
+            style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+          >
+            {recordingStatus}
+          </span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
             <input type="checkbox" />
-            固定当前答案
+            Pin current answer
           </label>
         </div>
-        
-        <div style={{ flex: 1, margin: '0 24px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input 
-            style={{ 
-              flex: 1, 
-              padding: '8px 12px', 
-              border: '1px solid #d9d9d9', 
-              borderRadius: 4,
-              fontSize: 14
-            }} 
-            placeholder="输入你的问题" 
+
+        <div style={{ flex: 1, margin: '0 24px', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <input
+            style={{ flex: 1, minWidth: 220, height: 40, padding: '8px 12px', border: '1px solid #d9d9d9', borderRadius: 4, fontSize: 14 }}
+            placeholder="Type an interview question"
+            value={manualQuestion}
+            onChange={(event) => setManualQuestion(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                handleManualSend()
+              }
+            }}
           />
-          <button style={{ 
-            padding: '8px 16px', 
-            border: '1px solid #d9d9d9', 
-            borderRadius: 4, 
-            background: '#fff',
-            cursor: 'pointer',
-            fontSize: 14
-          }}>
-            发送
+          <button
+            style={{ width: 72, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap' }}
+            onClick={handleManualSend}
+          >
+            Send
           </button>
-          <button style={{ 
-            padding: '8px 12px', 
-            border: '1px solid #d9d9d9', 
-            borderRadius: 4, 
-            background: '#fff',
-            cursor: 'pointer',
-            fontSize: 12
-          }}>
-            自定义提示词
+          <select
+            value={audioSource}
+            disabled={recording}
+            onChange={(event) => setAudioSource(event.target.value as AudioSource)}
+            style={{ width: 136, height: 40, padding: '0 10px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: recording ? 'not-allowed' : 'pointer', fontSize: 14 }}
+          >
+            <option value="meeting">Meeting audio</option>
+            <option value="microphone">Microphone</option>
+          </select>
+          <button style={{ width: 104, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+            Custom prompt
           </button>
-          <button style={{ 
-            padding: '8px 12px', 
-            border: '1px solid #d9d9d9', 
-            borderRadius: 4, 
-            background: '#fff',
-            cursor: 'pointer',
-            fontSize: 12
-          }}>
-            笔记辅助
+          <button style={{ width: 72, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+            Notes
           </button>
         </div>
-        
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+
+        <div style={{ width: 300, minWidth: 300, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{
               display: 'inline-block',
@@ -288,38 +367,22 @@ const InterviewMeeting: React.FC = () => {
               background: recording ? (audioActive ? '#52c41a' : '#ff4d4f') : '#d9d9d9',
             }} />
             <span style={{ fontSize: 12, color: '#666' }}>
-              {recording ? (audioActive ? '录音中' : '静音中') : '未录音'}
+              {recording ? (audioActive ? 'Recording' : 'Silent') : 'Not recording'}
             </span>
           </div>
-          
-          <button 
-            style={{ 
-              background: recording ? '#ff4d4f' : '#1677ff', 
-              color: '#fff', 
-              padding: '10px 20px', 
-              border: 'none', 
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontSize: 14,
-              fontWeight: 500
-            }} 
+
+          <button
+            style={{ width: 112, height: 48, background: recording ? '#ff4d4f' : '#1677ff', color: '#fff', padding: '0 12px', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}
             onClick={recording ? handleStop : handleStart}
           >
-            {recording ? '停止录音' : '开始面试'}
+            {recording ? 'Stop recording' : 'Start interview'}
           </button>
-          
-          <button 
-            style={{ 
-              padding: '10px 16px', 
-              border: '1px solid #d9d9d9', 
-              borderRadius: 6, 
-              background: '#fff',
-              cursor: 'pointer',
-              fontSize: 14
-            }} 
+
+          <button
+            style={{ width: 72, height: 48, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 14 }}
             onClick={() => navigate('/interview/new')}
           >
-            返回设置
+            Back
           </button>
         </div>
       </div>
@@ -327,4 +390,4 @@ const InterviewMeeting: React.FC = () => {
   )
 }
 
-export default InterviewMeeting 
+export default InterviewMeeting

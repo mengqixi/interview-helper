@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { devtools, immer } from 'zustand/middleware'
+import { devtools } from 'zustand/middleware'
+import { immer } from 'zustand/middleware/immer'
 
 interface UserInfo {
   id: string
@@ -44,4 +45,4 @@ export const useUserConfigStore = create<UserConfigState>()(
       traceLimit: 25,
     }
   )
-) 
+)

@@ -1,5 +1,5 @@
 import { Card, Form, Input, Button, Tabs, Space, Typography, Divider, message, InputNumber } from 'antd'
-import { SaveOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons'
+import { SaveOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useXfyunConfigStore } from '../store/xfyunConfigStore'
 import { useApiConfigStore } from '../store/apiConfigStore'
 
@@ -9,22 +9,20 @@ const { TabPane } = Tabs
 export default function Settings() {
   const { config: xfyunConfig, updateConfig: updateXfyunConfig, clearConfig: clearXfyunConfig } = useXfyunConfigStore()
   const { apiConfigs, updateConfig: updateApiConfig } = useApiConfigStore()
-  
+
   const [xfyunForm] = Form.useForm()
   const [deepseekForm] = Form.useForm()
-
-  // 获取默认的DeepSeek配置
   const deepseekConfig = apiConfigs.find(config => config.apiProvider === 'deepseek') || apiConfigs[0]
 
   const handleXfyunSave = (values: any) => {
-    updateXfyunConfig(values.appId, values.apiKey)
-    message.success('科大讯飞配置已保存')
+    updateXfyunConfig(values.appId, values.apiKey, values.apiSecret)
+    message.success('Xfyun config saved')
   }
 
   const handleXfyunClear = () => {
     clearXfyunConfig()
     xfyunForm.resetFields()
-    message.success('科大讯飞配置已清除')
+    message.success('Xfyun config cleared')
   }
 
   const handleDeepSeekSave = (values: any) => {
@@ -36,20 +34,20 @@ export default function Settings() {
         maxTokens: values.maxTokens,
         temperature: values.temperature,
       })
-      message.success('DeepSeek配置已保存')
+      message.success('DeepSeek config saved')
     }
   }
 
   return (
     <div style={{ padding: '24px', maxWidth: '800px', margin: '0 auto' }}>
-      <Title level={2}>应用设置</Title>
-      <Text type="secondary">配置API密钥和相关参数</Text>
-      
+      <Title level={2}>Settings</Title>
+      <Text type="secondary">Configure API keys and model parameters.</Text>
+
       <Divider />
-      
+
       <Tabs defaultActiveKey="xfyun" type="card">
-        <TabPane tab="科大讯飞语音" key="xfyun">
-          <Card title="科大讯飞RTasr API配置">
+        <TabPane tab="Xfyun ASR" key="xfyun">
+          <Card title="Xfyun realtime ASR large model">
             <Form
               form={xfyunForm}
               layout="vertical"
@@ -57,72 +55,66 @@ export default function Settings() {
               initialValues={{
                 appId: xfyunConfig.appId,
                 apiKey: xfyunConfig.apiKey,
+                apiSecret: xfyunConfig.apiSecret,
               }}
             >
               <Form.Item
-                label="App ID"
+                label="APPID"
                 name="appId"
-                rules={[{ required: true, message: '请输入科大讯飞App ID' }]}
+                rules={[{ required: true, message: 'Please enter Xfyun APPID' }]}
               >
-                <Input 
-                  placeholder="请输入科大讯飞App ID"
-                  size="large"
-                />
+                <Input placeholder="APPID from console.xfyun.cn/services/new_rta" size="large" />
               </Form.Item>
-              
+
               <Form.Item
-                label="API Key"
+                label="APIKey"
                 name="apiKey"
-                rules={[{ required: true, message: '请输入科大讯飞API Key' }]}
+                rules={[{ required: true, message: 'Please enter Xfyun APIKey' }]}
               >
-                <Input.Password 
-                  placeholder="请输入科大讯飞API Key"
-                  size="large"
-                />
+                <Input.Password placeholder="APIKey from console.xfyun.cn/services/new_rta" size="large" />
               </Form.Item>
-              
+
+              <Form.Item
+                label="APISecret"
+                name="apiSecret"
+                rules={[{ required: true, message: 'Please enter Xfyun APISecret' }]}
+              >
+                <Input.Password placeholder="APISecret from console.xfyun.cn/services/new_rta" size="large" />
+              </Form.Item>
+
               <Form.Item>
                 <Space>
-                  <Button 
-                    type="primary" 
-                    htmlType="submit" 
-                    icon={<SaveOutlined />}
-                    size="large"
-                  >
-                    保存配置
+                  <Button type="primary" htmlType="submit" icon={<SaveOutlined />} size="large">
+                    Save config
                   </Button>
-                  <Button 
-                    onClick={handleXfyunClear}
-                    icon={<DeleteOutlined />}
-                    size="large"
-                  >
-                    清除配置
+                  <Button onClick={handleXfyunClear} icon={<DeleteOutlined />} size="large">
+                    Clear config
                   </Button>
                 </Space>
               </Form.Item>
             </Form>
-            
+
             <Divider />
-            
+
             <div>
-              <Text strong>配置状态：</Text>
-              <Text type={xfyunConfig.isConfigured ? "success" : "warning"}>
-                {xfyunConfig.isConfigured ? " ✅ 已配置" : " ⚠️ 未配置"}
+              <Text strong>Status: </Text>
+              <Text type={xfyunConfig.isConfigured ? 'success' : 'warning'}>
+                {xfyunConfig.isConfigured ? 'Configured' : 'Not configured'}
               </Text>
             </div>
-            
+
             {xfyunConfig.updatedAt && (
               <div style={{ marginTop: 8 }}>
                 <Text type="secondary">
-                  最后更新：{new Date(xfyunConfig.updatedAt).toLocaleString()}
+                  Last updated: {new Date(xfyunConfig.updatedAt).toLocaleString()}
                 </Text>
               </div>
             )}
           </Card>
         </TabPane>
-        
+
         <TabPane tab="DeepSeek AI" key="deepseek">
-          <Card title="DeepSeek API配置">
+          <Card title="DeepSeek API">
             <Form
               form={deepseekForm}
               layout="vertical"
@@ -138,93 +130,58 @@ export default function Settings() {
               <Form.Item
                 label="API Key"
                 name="apiKey"
-                rules={[{ required: true, message: '请输入DeepSeek API Key' }]}
+                rules={[{ required: true, message: 'Please enter DeepSeek API key' }]}
               >
-                <Input.Password 
-                  placeholder="请输入DeepSeek API Key"
-                  size="large"
-                />
+                <Input.Password placeholder="DeepSeek API key" size="large" />
               </Form.Item>
-              
+
               <Form.Item
                 label="API Base URL"
                 name="baseUrl"
-                rules={[{ required: true, message: '请输入API Base URL' }]}
+                rules={[{ required: true, message: 'Please enter API base URL' }]}
               >
-                <Input 
-                  placeholder="https://api.deepseek.com"
-                  size="large"
-                />
+                <Input placeholder="https://api.deepseek.com" size="large" />
               </Form.Item>
-              
+
               <Form.Item
-                label="模型名称"
+                label="Model"
                 name="model"
-                rules={[{ required: true, message: '请输入模型名称' }]}
+                rules={[{ required: true, message: 'Please enter model name' }]}
               >
-                <Input 
-                  placeholder="deepseek-chat"
-                  size="large"
-                />
+                <Input placeholder="deepseek-chat" size="large" />
               </Form.Item>
-              
+
               <Form.Item
-                label="最大Token数"
+                label="Max tokens"
                 name="maxTokens"
-                rules={[{ required: true, type: 'number', min: 1, max: 4000, message: '请输入1-4000之间的数字' }]}
+                rules={[{ required: true, type: 'number', min: 1, max: 4000, message: 'Enter a number from 1 to 4000' }]}
               >
-                <InputNumber 
-                  placeholder="2000"
-                  style={{ width: '100%' }}
-                  size="large"
-                  min={1}
-                  max={4000}
-                />
+                <InputNumber placeholder="2000" style={{ width: '100%' }} size="large" min={1} max={4000} />
               </Form.Item>
-              
+
               <Form.Item
                 label="Temperature"
                 name="temperature"
-                rules={[{ required: true, type: 'number', min: 0, max: 2, message: '请输入0-2之间的数字' }]}
+                rules={[{ required: true, type: 'number', min: 0, max: 2, message: 'Enter a number from 0 to 2' }]}
               >
-                <InputNumber 
-                  placeholder="0.7"
-                  style={{ width: '100%' }}
-                  size="large"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                />
+                <InputNumber placeholder="0.7" style={{ width: '100%' }} size="large" min={0} max={2} step={0.1} />
               </Form.Item>
-              
+
               <Form.Item>
-                <Button 
-                  type="primary" 
-                  htmlType="submit" 
-                  icon={<SaveOutlined />}
-                  size="large"
-                >
-                  保存配置
+                <Button type="primary" htmlType="submit" icon={<SaveOutlined />} size="large">
+                  Save config
                 </Button>
               </Form.Item>
             </Form>
-            
+
             <Divider />
-            
+
             <div>
-              <Text strong>配置状态：</Text>
-              <Text type={deepseekConfig?.apiKey ? "success" : "warning"}>
-                {deepseekConfig?.apiKey ? " ✅ 已配置" : " ⚠️ 未配置"}
+              <Text strong>Status: </Text>
+              <Text type={deepseekConfig?.apiKey ? 'success' : 'warning'}>
+                {deepseekConfig?.apiKey ? 'Configured' : 'Not configured'}
               </Text>
             </div>
-            
-            {deepseekConfig?.updatedAt && (
-              <div style={{ marginTop: 8 }}>
-                <Text type="secondary">
-                  最后更新：{new Date(deepseekConfig.updatedAt).toLocaleString()}
-                </Text>
-              </div>
-            )}
           </Card>
         </TabPane>
       </Tabs>
