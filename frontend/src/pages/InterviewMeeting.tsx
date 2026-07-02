@@ -347,7 +347,7 @@ const InterviewMeeting: React.FC = () => {
     try {
       const response = await chatWithDeepSeek(
         prepareManualQuestionForAI(content, useInterviewStore.getState().messages, useInterviewStore.getState().answers),
-        { stream: false },
+        { stream: false, max_tokens: 700 },
       )
       const answer = response.choices?.[0]?.message?.content || ''
 

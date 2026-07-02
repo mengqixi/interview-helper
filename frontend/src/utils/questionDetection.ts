@@ -1,6 +1,8 @@
 import { CANDIDATE_CONTEXT } from '@/data/candidateContext'
 import type { Answer, MeetingMessage } from '../store/interviewStore'
 
+const COMPACT_CANDIDATE_CONTEXT = CANDIDATE_CONTEXT.slice(0, 2600)
+
 export const getRecentMessages = (
   messages: MeetingMessage[],
   timeWindow = 30000,
@@ -31,14 +33,16 @@ Interview context:
 - Answer language/region: ${region}
 
 Candidate context:
-${CANDIDATE_CONTEXT}
+${COMPACT_CANDIDATE_CONTEXT}
 
 Task:
 - Detect the newest interviewer question from the latest transcript messages.
 - Answer the newest question directly, professionally, and in Simplified Chinese unless the transcript clearly asks for another language.
+- Be concise and interview-ready: no preface, no apology, no restating the question.
 - Prefer computer science and AI terminology: data structures, algorithms, complexity, OS, networking, databases, distributed systems, ML/deep learning, LLM/RAG/agents, frontend/backend engineering, and system design where relevant.
-- Include key trade-offs, failure modes, and implementation details when they help the answer.
-- Keep the answer concise enough to speak in an interview: usually 3-6 bullet points or one short structured paragraph.
+- Include only the most important trade-offs or implementation details.
+- Keep the answer short: usually 1 short paragraph or at most 3 bullet points.
+- If it is a concept question, use definition + key point + project connection. Do not expand into a long tutorial.
 - If the transcript is noise or not a question, do not invent a long answer; provide a short clarification or the most likely interview-oriented response.
 - Use the candidate context naturally when it helps, especially for project, resume, AI engineering, backend, security, networking, mobile, or realtime communication questions.
 - Use the conversation history to understand what the interviewer already asked, what the candidate already answered, and what AI suggestions were already given. Do not repeat old answers unless the newest question asks for refinement.
@@ -49,7 +53,7 @@ const buildTranscriptHistory = (messages: MeetingMessage[], excludeIds: string[]
   return messages
     .filter(message => !excludeIds.includes(message.id))
     .sort((a, b) => a.timestamp - b.timestamp)
-    .slice(-40)
+    .slice(-12)
     .map(message => ({
       role: 'user' as const,
       content: message.role === 'asker'
@@ -61,7 +65,7 @@ const buildTranscriptHistory = (messages: MeetingMessage[], excludeIds: string[]
 const buildPreviousAnswerHistory = (answers: Answer[] = []) => {
   return answers
     .sort((a, b) => a.created - b.created)
-    .slice(-6)
+    .slice(-2)
     .map(answer => ({
       role: 'assistant' as const,
       content: `[previous AI suggestion]\nQuestion: ${answer.question}\nAnswer: ${answer.message}`,
@@ -69,7 +73,7 @@ const buildPreviousAnswerHistory = (answers: Answer[] = []) => {
 }
 
 export const prepareMessagesForAI = (messages: MeetingMessage[], answers: Answer[] = []) => {
-  const recentMessages = getRecentMessages(messages, 10 * 60 * 1000, 40)
+  const recentMessages = getRecentMessages(messages, 10 * 60 * 1000, 12)
   const interviewerMessages = recentMessages.filter(message => message.role === 'asker')
   const newMessages = interviewerMessages.filter(message => !message.isAsked)
 

@@ -34,6 +34,7 @@ interface DeepSeekRequest {
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:9000').replace(/\/$/, '')
+const DEEPSEEK_TIMEOUT_MS = 25000
 
 const getDeepSeekConfig = () => {
   const { apiConfigs } = useApiConfigStore.getState()
@@ -93,14 +94,28 @@ export const chatWithDeepSeek = async (
   }
 ): Promise<DeepSeekResponse> => {
   const token = localStorage.getItem('token')
-  const response = await fetch(`${API_BASE_URL}/api/ai/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(buildRequestBody(messages, options)),
-  })
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT_MS)
+  let response: Response
+
+  try {
+    response = await fetch(`${API_BASE_URL}/api/ai/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(buildRequestBody(messages, options)),
+      signal: controller.signal,
+    })
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error('DeepSeek 请求超时，请稍后再试')
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response))
@@ -179,7 +194,7 @@ export const handleQuestionDetected = async () => {
       return
     }
 
-    const response = await chatWithDeepSeek(aiMessages, { stream: false })
+    const response = await chatWithDeepSeek(aiMessages, { stream: false, max_tokens: 700 })
     const answer = response.choices?.[0]?.message?.content || ''
 
     if (!answer) {
