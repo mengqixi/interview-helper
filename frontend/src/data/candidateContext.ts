@@ -38,9 +38,22 @@ Project 2: CrossNotify, cross-device instant notification system.
 - Candidate contribution: independently built the server, Windows desktop client, and Android client, and completed Linux cloud deployment and daily operations.
 - Good interview angles: explain trade-offs between WebSocket long connections and offline push, reconnect strategy, Android background restrictions, message persistence, Electron desktop integration, and deployment operations.
 
+Project 3: Interview Helper, realtime AI interview assistant.
+- Repository: github.com/mengqixi/interview-helper.
+- Stack: React 19, TypeScript, Vite, Ant Design, Zustand, Web Audio API, FastAPI, PostgreSQL, Redis, SQLAlchemy, httpx, Docker Compose, DeepSeek API, Xfyun realtime ASR WebSocket.
+- Positioning: a local technical-interview assistant that captures live interview audio, transcribes it in realtime, detects interviewer questions, and generates concise interview-ready answers through DeepSeek.
+- Frontend features: interview room UI, realtime transcript panel, AI answer panel with Markdown rendering, manual question input, manual interviewer-question send button, fixed-height bottom toolbar, provider settings pages, and Chinese UI labels.
+- Audio implementation: uses browser microphone capture for local testing and getDisplayMedia audio capture for meeting/system audio; converts audio through Web Audio API, resamples it to 16 kHz PCM16 frames, and streams frames to Xfyun realtime ASR.
+- ASR implementation: integrates Xfyun realtime speech-to-text large-model WebSocket endpoint, builds APPID/APIKey/APISecret authentication parameters, parses ASR results, labels meeting audio as interviewer text, deduplicates transcript fragments, and merges short fragments before triggering AI.
+- AI implementation: adds a FastAPI backend proxy for DeepSeek-compatible chat completions, avoiding browser CORS issues; supports normal and streaming-style response plumbing; injects candidate/project context into the system prompt so answers can use resume and project experience naturally.
+- Backend and deployment: uses FastAPI routes, PostgreSQL, Redis, JWT-related existing backend structure, Docker Compose full deployment, separate frontend/backend/postgres/redis containers, health checks, log-based troubleshooting, and restart/build workflow.
+- Candidate contribution: adapted and debugged the project for real interview use, fixed API connectivity, integrated Xfyun new realtime ASR service, added meeting-audio capture, added automatic and manual question sending, localized main frontend UI, wrote deployment documentation, and pushed the maintained fork to GitHub.
+- Good interview angles: explain browser audio capture limitations, WebSocket streaming frame format, frontend state management with Zustand, why a backend proxy is needed for DeepSeek, how to debounce/merge ASR fragments before triggering an LLM, how to avoid leaking API keys in commits, and how Docker helps reproduce the deployment.
+
 Answering strategy:
-- When the interviewer asks about projects, prefer using the two projects above. Do not invent experience that is not listed here.
+- When the interviewer asks about projects, prefer using the three projects above. Do not invent experience that is not listed here.
 - For AI, backend, or security questions, prefer Project 1 and emphasize feature engineering, rule/model fusion, interpretability, data security, federated learning, and homomorphic-encryption demonstration.
 - For engineering, networking, mobile, realtime communication, or deployment questions, prefer Project 2 and emphasize WebSocket long connections, offline push, Android background limits, Electron desktop client design, and Linux deployment.
+- For frontend, browser API, audio processing, LLM integration, API proxy, Docker deployment, or practical AI-tooling questions, prefer Project 3 and emphasize Web Audio, getDisplayMedia, realtime ASR WebSocket, DeepSeek backend proxy, question-trigger debounce/merge logic, and production-style troubleshooting.
 - It is acceptable to say the candidate mainly handled independent development, integration, testing, and documentation, while using AI tools to improve efficiency. Do not make the answer sound fully dependent on AI.
 `.trim()
