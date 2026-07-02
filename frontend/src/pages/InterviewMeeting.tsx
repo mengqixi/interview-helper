@@ -21,7 +21,7 @@ const InterviewMeeting: React.FC = () => {
   const [recording, setRecording] = useState(false)
   const [audioActive, setAudioActive] = useState(false)
   const [manualQuestion, setManualQuestion] = useState('')
-  const [recordingStatus, setRecordingStatus] = useState('Not recording')
+  const [recordingStatus, setRecordingStatus] = useState('未录音')
   const [audioSource, setAudioSource] = useState<AudioSource>('meeting')
   const wsRef = useRef<WebSocket | null>(null)
   const recorderRef = useRef<BrowserAudioRecorder | null>(null)
@@ -72,7 +72,7 @@ const InterviewMeeting: React.FC = () => {
     })
 
     if (triggerAI && pending.role === 'asker') {
-      appendRecordingStatus('sending to DeepSeek')
+      appendRecordingStatus('正在发送给 DeepSeek')
       window.setTimeout(() => {
         handleQuestionDetected()
       }, 50)
@@ -113,12 +113,12 @@ const InterviewMeeting: React.FC = () => {
   const handleRtasrResult = (data: any) => {
     if (data?.msg_type === 'action' && data?.data?.sessionId) {
       sessionIdRef.current = data.data.sessionId
-      appendRecordingStatus('session ready')
+      appendRecordingStatus('会话已就绪')
       return
     }
 
     if (data?.msg_type === 'result' && data?.res_type && data.res_type !== 'asr') {
-      const errorText = data?.data?.desc || 'Realtime transcription failed'
+      const errorText = data?.data?.desc || '实时转写失败'
       message.error(errorText)
       console.error('RTASR error:', data)
       return
@@ -128,7 +128,7 @@ const InterviewMeeting: React.FC = () => {
     if (data?.msg_type && data.msg_type !== 'result') return
 
     if (data.code && data.code !== '0') {
-      message.error(data.desc || 'Realtime transcription failed')
+      message.error(data.desc || '实时转写失败')
       console.error('RTASR error:', data)
       return
     }
@@ -161,7 +161,7 @@ const InterviewMeeting: React.FC = () => {
 
   const handleStart = async () => {
     try {
-      setRecordingStatus('Connecting to RTASR')
+      setRecordingStatus('正在连接实时转写')
       frameCountRef.current = 0
       sessionIdRef.current = null
       seenTranscriptRef.current.clear()
@@ -178,8 +178,8 @@ const InterviewMeeting: React.FC = () => {
         onResult: handleRtasrResult,
         onError: () => {
           setRecording(false)
-          appendRecordingStatus('WebSocket error')
-          message.error('RTASR connection failed. Check Xfyun AppID/API Key and network.')
+          appendRecordingStatus('WebSocket 错误')
+          message.error('实时转写连接失败，请检查讯飞配置和网络')
         },
         onClose: (event) => {
           setRecording(false)
@@ -191,12 +191,12 @@ const InterviewMeeting: React.FC = () => {
         },
         onOpen: async () => {
           try {
-            appendRecordingStatus('opened')
-            appendRecordingStatus(audioSource === 'meeting' ? 'requesting meeting audio' : 'requesting microphone')
+            appendRecordingStatus('已打开')
+            appendRecordingStatus(audioSource === 'meeting' ? '正在请求会议音频' : '正在请求麦克风')
             recorder.onFrameRecorded = ({ isLastFrame, frameBuffer }: any) => {
               frameCountRef.current += 1
               if (frameCountRef.current === 1) {
-                appendRecordingStatus('first audio frame')
+                appendRecordingStatus('第一帧音频')
               } else if (frameCountRef.current % 25 === 0) {
                 setRecordingStatus(previous => `${previous.split(' | ')[0]} | frames: ${frameCountRef.current}`)
               }
@@ -215,12 +215,12 @@ const InterviewMeeting: React.FC = () => {
             }
             recorder.onStop = () => {}
             await recorder.start({ sampleRate: 16000, frameSize: 640, source: audioSource })
-            appendRecordingStatus(audioSource === 'meeting' ? 'meeting audio started' : 'microphone started')
+            appendRecordingStatus(audioSource === 'meeting' ? '会议音频已开始' : '麦克风已开始')
           } catch (err: any) {
             setRecording(false)
             const errorMessage = err?.message || (audioSource === 'meeting'
-              ? 'Meeting audio capture failed. Select a screen/window/tab and enable audio sharing.'
-              : 'Microphone capture failed. Please allow microphone access.')
+              ? '会议音频采集失败，请选择屏幕、窗口或标签页，并开启音频共享。'
+              : '麦克风采集失败，请允许麦克风权限。')
             appendRecordingStatus(errorMessage)
             ws.close(4000, 'recorder-start-failed')
             message.error(errorMessage)
@@ -231,15 +231,15 @@ const InterviewMeeting: React.FC = () => {
       wsRef.current = ws
     } catch (err: any) {
       setRecording(false)
-      setRecordingStatus(err?.message || 'Failed to start realtime transcription')
-      message.error(err?.message || 'Failed to start realtime transcription')
-      console.error('Start interview failed:', err)
+      setRecordingStatus(err?.message || '启动实时转写失败')
+      message.error(err?.message || '启动实时转写失败')
+      console.error('开始面试 failed:', err)
     }
   }
 
   const handleStop = () => {
     setRecording(false)
-    appendRecordingStatus('stopped')
+    appendRecordingStatus('已停止')
     flushPendingTranscript(true)
     recorderRef.current?.stop()
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -259,12 +259,12 @@ const InterviewMeeting: React.FC = () => {
     const hasUnsentInterviewer = messages.some(msg => msg.role === 'asker' && !msg.isAsked)
 
     if (!hasPendingInterviewer && !hasUnsentInterviewer) {
-      appendRecordingStatus('no unsent interviewer text')
+      appendRecordingStatus('没有未发送的面试官文本')
       return
     }
 
     flushPendingTranscript(false)
-    appendRecordingStatus('manual send to DeepSeek')
+    appendRecordingStatus('手动发送给 DeepSeek')
     window.setTimeout(() => {
       handleQuestionDetected()
     }, 80)
@@ -295,7 +295,7 @@ const InterviewMeeting: React.FC = () => {
       const answer = response.choices?.[0]?.message?.content || ''
 
       if (!answer) {
-        throw new Error('AI response was empty')
+        throw new Error('AI 返回为空')
       }
 
       upsertAnswer({
@@ -305,14 +305,14 @@ const InterviewMeeting: React.FC = () => {
         question: content,
       })
     } catch (err: any) {
-      message.error(err?.message || 'AI request failed')
+      message.error(err?.message || 'AI 请求失败')
       console.error('Manual question failed:', err)
     }
   }
 
   React.useEffect(() => {
     const handleAnswerCreated = () => {
-      appendRecordingStatus('DeepSeek answered')
+      appendRecordingStatus('DeepSeek 已回答')
     }
 
     const handleAnswerFailed = (event: Event) => {
@@ -367,26 +367,26 @@ const InterviewMeeting: React.FC = () => {
           {answers.length > 0 ? answers.map((ans, idx) => (
             <div key={ans.id || idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 24, minHeight: 'fit-content' }}>
               <div style={{ flex: 1, background: '#f5f5f5', borderRadius: 8, padding: 12, textAlign: 'left', maxWidth: '30%', minWidth: '200px' }}>
-                <b>Q:</b> {ans.question}
+                <b>问：</b> {ans.question}
               </div>
               <div style={{ flex: 2, background: '#e6f7ff', borderRadius: 8, padding: 12, textAlign: 'left' }}>
-                <b>A:</b> <ReactMarkdown>{ans.message}</ReactMarkdown>
+                <b>答：</b> <ReactMarkdown>{ans.message}</ReactMarkdown>
               </div>
             </div>
           )) : (
             <div style={{ fontSize: 32, color: '#ddd', textAlign: 'center', margin: 'auto' }}>
-              No answers yet
+              暂无答案
             </div>
           )}
         </div>
 
         <div style={{ width: 250, borderLeft: '1px solid #eee', padding: 16, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ margin: '0 0 16px 0', fontSize: 16, color: '#666', flexShrink: 0 }}>Live transcript</h3>
+          <h3 style={{ margin: '0 0 16px 0', fontSize: 16, color: '#666', flexShrink: 0 }}>现场文字记录</h3>
           <div ref={voiceContentRef} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {messages.map((msg, idx) => (
               <div key={msg.id || idx} style={{ marginBottom: 8, background: msg.role === 'user' ? '#f0f8ff' : '#f5f5f5', borderRadius: 8, padding: 8, fontSize: 12, lineHeight: 1.4 }}>
                 <b style={{ color: msg.role === 'user' ? '#1677ff' : '#722ed1' }}>
-                  {msg.role === 'user' ? 'Me' : 'Interviewer'}:
+                  {msg.role === 'user' ? '我' : '面试官'}:
                 </b>{' '}
                 {msg.content}
               </div>
@@ -408,7 +408,7 @@ const InterviewMeeting: React.FC = () => {
         overflow: 'hidden',
       }}>
         <div style={{ width: 300, minWidth: 300, fontSize: 12, color: '#666', overflow: 'hidden' }}>
-          Help center<br />
+          帮助中心<br />
           <span
             title={recordingStatus}
             style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
@@ -417,14 +417,14 @@ const InterviewMeeting: React.FC = () => {
           </span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
             <input type="checkbox" />
-            Pin current answer
+            固定当前答案
           </label>
         </div>
 
         <div style={{ flex: 1, margin: '0 24px', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <input
             style={{ flex: 1, minWidth: 220, height: 40, padding: '8px 12px', border: '1px solid #d9d9d9', borderRadius: 4, fontSize: 14 }}
-            placeholder="Type an interview question"
+            placeholder="输入面试问题"
             value={manualQuestion}
             onChange={(event) => setManualQuestion(event.target.value)}
             onKeyDown={(event) => {
@@ -437,7 +437,7 @@ const InterviewMeeting: React.FC = () => {
             style={{ width: 72, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap' }}
             onClick={handleManualSend}
           >
-            Send
+            发送
           </button>
           <select
             value={audioSource}
@@ -445,20 +445,20 @@ const InterviewMeeting: React.FC = () => {
             onChange={(event) => setAudioSource(event.target.value as AudioSource)}
             style={{ width: 136, height: 40, padding: '0 10px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: recording ? 'not-allowed' : 'pointer', fontSize: 14 }}
           >
-            <option value="meeting">Meeting audio</option>
-            <option value="microphone">Microphone</option>
+            <option value="meeting">会议音频</option>
+            <option value="microphone">麦克风</option>
           </select>
           <button style={{ width: 104, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-            Custom prompt
+            自定义提示词
           </button>
           <button
             style={{ width: 128, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
             onClick={handleSendInterviewerNow}
           >
-            Send interviewer
+            发送面试官
           </button>
           <button style={{ width: 72, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-            Notes
+            注释
           </button>
         </div>
 
@@ -472,7 +472,7 @@ const InterviewMeeting: React.FC = () => {
               background: recording ? (audioActive ? '#52c41a' : '#ff4d4f') : '#d9d9d9',
             }} />
             <span style={{ fontSize: 12, color: '#666' }}>
-              {recording ? (audioActive ? 'Recording' : 'Silent') : 'Not recording'}
+              {recording ? (audioActive ? '录音中' : '静音') : '未录音'}
             </span>
           </div>
 
@@ -480,14 +480,14 @@ const InterviewMeeting: React.FC = () => {
             style={{ width: 112, height: 48, background: recording ? '#ff4d4f' : '#1677ff', color: '#fff', padding: '0 12px', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}
             onClick={recording ? handleStop : handleStart}
           >
-            {recording ? 'Stop recording' : 'Start interview'}
+            {recording ? '停止录音' : '开始面试'}
           </button>
 
           <button
             style={{ width: 72, height: 48, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 14 }}
             onClick={() => navigate('/interview/new')}
           >
-            Back
+            返回
           </button>
         </div>
       </div>
