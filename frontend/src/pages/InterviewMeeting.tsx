@@ -9,7 +9,13 @@ import { isAudioActive } from '@/utils/voiceIdentifier'
 import { BrowserAudioRecorder } from '@/utils/browserAudioRecorder'
 import { prepareManualQuestionForAI } from '@/utils/questionDetection'
 
-type AudioSource = 'meeting' | 'microphone'
+type AudioSource = 'both' | 'meeting' | 'microphone'
+type CaptureSource = 'meeting' | 'microphone'
+type CaptureTarget = {
+  source: CaptureSource
+  role: 'user' | 'asker'
+  label: string
+}
 
 const InterviewMeeting: React.FC = () => {
   const navigate = useNavigate()
@@ -22,13 +28,13 @@ const InterviewMeeting: React.FC = () => {
   const [audioActive, setAudioActive] = useState(false)
   const [manualQuestion, setManualQuestion] = useState('')
   const [recordingStatus, setRecordingStatus] = useState('未录音')
-  const [audioSource, setAudioSource] = useState<AudioSource>('meeting')
-  const wsRef = useRef<WebSocket | null>(null)
-  const recorderRef = useRef<BrowserAudioRecorder | null>(null)
+  const [audioSource, setAudioSource] = useState<AudioSource>('both')
+  const wsRefs = useRef<Partial<Record<CaptureSource, WebSocket>>>({})
+  const recorderRefs = useRef<Partial<Record<CaptureSource, BrowserAudioRecorder>>>({})
   const chatAreaRef = useRef<HTMLDivElement>(null)
   const voiceContentRef = useRef<HTMLDivElement>(null)
-  const frameCountRef = useRef(0)
-  const sessionIdRef = useRef<string | null>(null)
+  const frameCountRefs = useRef<Partial<Record<CaptureSource, number>>>({})
+  const sessionIdRefs = useRef<Partial<Record<CaptureSource, string>>>({})
   const aiDebounceRef = useRef<number | null>(null)
   const seenTranscriptRef = useRef<Set<string>>(new Set())
   const transcriptFlushTimerRef = useRef<number | null>(null)
@@ -110,10 +116,34 @@ const InterviewMeeting: React.FC = () => {
     }, 1800)
   }
 
-  const handleRtasrResult = (data: any) => {
+  const getCaptureTargets = (): CaptureTarget[] => {
+    if (audioSource === 'both') {
+      return [
+        { source: 'meeting', role: 'asker', label: '会议音频' },
+        { source: 'microphone', role: 'user', label: '麦克风' },
+      ]
+    }
+
+    return audioSource === 'meeting'
+      ? [{ source: 'meeting', role: 'asker', label: '会议音频' }]
+      : [{ source: 'microphone', role: 'user', label: '麦克风' }]
+  }
+
+  const sendEndMessage = (source: CaptureSource, ws: WebSocket) => {
+    if (ws.readyState !== WebSocket.OPEN) return
+
+    const sessionId = sessionIdRefs.current[source]
+    ws.send(JSON.stringify(sessionId ? { end: true, sessionId } : { end: true }))
+  }
+
+  const allCaptureSocketsClosed = () => Object.values(wsRefs.current).every(
+    ws => !ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING,
+  )
+
+  const handleRtasrResult = (data: any, target: CaptureTarget) => {
     if (data?.msg_type === 'action' && data?.data?.sessionId) {
-      sessionIdRef.current = data.data.sessionId
-      appendRecordingStatus('会话已就绪')
+      sessionIdRefs.current[target.source] = data.data.sessionId
+      appendRecordingStatus(`${target.label}会话已就绪`)
       return
     }
 
@@ -139,16 +169,16 @@ const InterviewMeeting: React.FC = () => {
       code: data.code || '0',
       data: parsedData,
       desc: data.desc,
-      sid: data.sid || sessionIdRef.current || '',
+      sid: data.sid || sessionIdRefs.current[target.source] || '',
     })
 
     const parsedMessages = parseRtasrResult(
       parsedData,
       undefined,
-      audioSource === 'meeting' ? 'asker' : 'user',
+      target.role,
     )
     const newMessages = parsedMessages.filter((msg) => {
-      const key = `${msg.role}:${msg.content.trim()}`
+      const key = `${target.source}:${msg.role}:${msg.content.trim()}`
       if (!msg.content.trim() || seenTranscriptRef.current.has(key)) {
         return false
       }
@@ -159,11 +189,76 @@ const InterviewMeeting: React.FC = () => {
     queueTranscriptMessages(newMessages)
   }
 
+  const startCapture = (target: CaptureTarget) => {
+    const recorder = new BrowserAudioRecorder()
+    recorderRefs.current[target.source] = recorder
+
+    const ws = createRtasrWebSocket({
+      onResult: data => handleRtasrResult(data, target),
+      onError: () => {
+        appendRecordingStatus(`${target.label} WebSocket 错误`)
+        message.error(`${target.label}实时转写连接失败，请检查讯飞配置和网络`)
+      },
+      onClose: (event) => {
+        appendRecordingStatus(`${target.label} closed ${event.code}${event.reason ? ` ${event.reason}` : ''}`)
+        if (allCaptureSocketsClosed()) {
+          setRecording(false)
+        }
+        if (event.code !== 1000 && event.code !== 4000) {
+          const reason = event.reason ? `: ${event.reason}` : ''
+          message.warning(`${target.label} RTASR connection closed (${event.code})${reason}`)
+        }
+      },
+      onOpen: async () => {
+        try {
+          appendRecordingStatus(`${target.label}已打开`)
+          appendRecordingStatus(`正在请求${target.label}`)
+          recorder.onFrameRecorded = ({ isLastFrame, frameBuffer }: any) => {
+            frameCountRefs.current[target.source] = (frameCountRefs.current[target.source] || 0) + 1
+            const frameCount = frameCountRefs.current[target.source] || 0
+            if (frameCount === 1) {
+              appendRecordingStatus(`${target.label}第一帧音频`)
+            } else if (frameCount % 25 === 0) {
+              setRecordingStatus(previous => `${previous.split(' | ')[0]} | ${target.label}: ${frameCount}`)
+            }
+
+            const active = frameBuffer.byteLength > 0 && isAudioActive(frameBuffer, 0.02)
+            setAudioActive(active)
+            setAudioActiveState(active)
+
+            if (ws.readyState === WebSocket.OPEN) {
+              if (frameBuffer.byteLength > 0) {
+                ws.send(new Int8Array(frameBuffer))
+              }
+              if (isLastFrame) {
+                sendEndMessage(target.source, ws)
+              }
+            }
+          }
+          recorder.onStop = () => {}
+          await recorder.start({ sampleRate: 16000, frameSize: 640, source: target.source })
+          appendRecordingStatus(`${target.label}已开始`)
+        } catch (err: any) {
+          const errorMessage = err?.message || (target.source === 'meeting'
+            ? '会议音频采集失败，请选择屏幕、窗口或标签页，并开启音频共享。'
+            : '麦克风采集失败，请允许麦克风权限。')
+          appendRecordingStatus(errorMessage)
+          ws.close(4000, 'recorder-start-failed')
+          message.error(errorMessage)
+          console.error(`${target.label} recorder start failed:`, err)
+        }
+      },
+    })
+    wsRefs.current[target.source] = ws
+  }
+
   const handleStart = async () => {
     try {
       setRecordingStatus('正在连接实时转写')
-      frameCountRef.current = 0
-      sessionIdRef.current = null
+      frameCountRefs.current = {}
+      sessionIdRefs.current = {}
+      wsRefs.current = {}
+      recorderRefs.current = {}
       seenTranscriptRef.current.clear()
       pendingTranscriptRef.current = null
       if (transcriptFlushTimerRef.current) {
@@ -171,64 +266,7 @@ const InterviewMeeting: React.FC = () => {
         transcriptFlushTimerRef.current = null
       }
       setRecording(true)
-      const recorder = new BrowserAudioRecorder()
-      recorderRef.current = recorder
-
-      const ws = createRtasrWebSocket({
-        onResult: handleRtasrResult,
-        onError: () => {
-          setRecording(false)
-          appendRecordingStatus('WebSocket 错误')
-          message.error('实时转写连接失败，请检查讯飞配置和网络')
-        },
-        onClose: (event) => {
-          setRecording(false)
-          appendRecordingStatus(`closed ${event.code}${event.reason ? ` ${event.reason}` : ''}`)
-          if (event.code !== 1000) {
-            const reason = event.reason ? `: ${event.reason}` : ''
-            message.warning(`RTASR connection closed (${event.code})${reason}`)
-          }
-        },
-        onOpen: async () => {
-          try {
-            appendRecordingStatus('已打开')
-            appendRecordingStatus(audioSource === 'meeting' ? '正在请求会议音频' : '正在请求麦克风')
-            recorder.onFrameRecorded = ({ isLastFrame, frameBuffer }: any) => {
-              frameCountRef.current += 1
-              if (frameCountRef.current === 1) {
-                appendRecordingStatus('第一帧音频')
-              } else if (frameCountRef.current % 25 === 0) {
-                setRecordingStatus(previous => `${previous.split(' | ')[0]} | frames: ${frameCountRef.current}`)
-              }
-              const active = isAudioActive(frameBuffer, 0.02)
-              setAudioActive(active)
-              setAudioActiveState(active)
-
-              if (ws.readyState === ws.OPEN) {
-                if (frameBuffer.byteLength > 0) {
-                  ws.send(new Int8Array(frameBuffer))
-                }
-                if (isLastFrame) {
-                  ws.send(JSON.stringify(sessionIdRef.current ? { end: true, sessionId: sessionIdRef.current } : { end: true }))
-                }
-              }
-            }
-            recorder.onStop = () => {}
-            await recorder.start({ sampleRate: 16000, frameSize: 640, source: audioSource })
-            appendRecordingStatus(audioSource === 'meeting' ? '会议音频已开始' : '麦克风已开始')
-          } catch (err: any) {
-            setRecording(false)
-            const errorMessage = err?.message || (audioSource === 'meeting'
-              ? '会议音频采集失败，请选择屏幕、窗口或标签页，并开启音频共享。'
-              : '麦克风采集失败，请允许麦克风权限。')
-            appendRecordingStatus(errorMessage)
-            ws.close(4000, 'recorder-start-failed')
-            message.error(errorMessage)
-            console.error('Recorder start failed:', err)
-          }
-        },
-      })
-      wsRef.current = ws
+      getCaptureTargets().forEach(startCapture)
     } catch (err: any) {
       setRecording(false)
       setRecordingStatus(err?.message || '启动实时转写失败')
@@ -241,11 +279,12 @@ const InterviewMeeting: React.FC = () => {
     setRecording(false)
     appendRecordingStatus('已停止')
     flushPendingTranscript(true)
-    recorderRef.current?.stop()
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(sessionIdRef.current ? { end: true, sessionId: sessionIdRef.current } : { end: true }))
-    }
-    wsRef.current?.close()
+    Object.values(recorderRefs.current).forEach(recorder => recorder?.stop())
+    Object.entries(wsRefs.current).forEach(([source, ws]) => {
+      if (!ws) return
+      sendEndMessage(source as CaptureSource, ws)
+      ws.close()
+    })
     cleanupQuestionDetection()
     if (aiDebounceRef.current) {
       window.clearTimeout(aiDebounceRef.current)
@@ -327,8 +366,8 @@ const InterviewMeeting: React.FC = () => {
       if (transcriptFlushTimerRef.current) {
         window.clearTimeout(transcriptFlushTimerRef.current)
       }
-      recorderRef.current?.stop()
-      wsRef.current?.close()
+      Object.values(recorderRefs.current).forEach(recorder => recorder?.stop())
+      Object.values(wsRefs.current).forEach(ws => ws?.close())
     }
   }, [])
 
@@ -439,6 +478,7 @@ const InterviewMeeting: React.FC = () => {
             onChange={(event) => setAudioSource(event.target.value as AudioSource)}
             style={{ width: 136, height: 40, padding: '0 10px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: recording ? 'not-allowed' : 'pointer', fontSize: 14 }}
           >
+            <option value="both">合并音频</option>
             <option value="meeting">会议音频</option>
             <option value="microphone">麦克风</option>
           </select>
