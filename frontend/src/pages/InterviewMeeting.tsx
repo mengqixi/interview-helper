@@ -38,6 +38,7 @@ const InterviewMeeting: React.FC = () => {
   const aiDebounceRef = useRef<number | null>(null)
   const seenTranscriptRef = useRef<Set<string>>(new Set())
   const transcriptFlushTimerRef = useRef<number | null>(null)
+  const captureRunIdRef = useRef(0)
   const pendingTranscriptRef = useRef<{
     role: 'user' | 'asker'
     content: string
@@ -92,7 +93,7 @@ const InterviewMeeting: React.FC = () => {
 
       const pending = pendingTranscriptRef.current
       if (!pending || pending.role !== msg.role) {
-        flushPendingTranscript(msg.role === 'asker')
+        flushPendingTranscript(pending?.role === 'asker')
         pendingTranscriptRef.current = {
           role: msg.role,
           content,
@@ -113,7 +114,7 @@ const InterviewMeeting: React.FC = () => {
 
     transcriptFlushTimerRef.current = window.setTimeout(() => {
       flushPendingTranscript(true)
-    }, 1800)
+    }, 800)
   }
 
   const getCaptureTargets = (): CaptureTarget[] => {
@@ -139,6 +140,19 @@ const InterviewMeeting: React.FC = () => {
   const allCaptureSocketsClosed = () => Object.values(wsRefs.current).every(
     ws => !ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING,
   )
+
+  const stopCaptureStreams = (sendEnd = true) => {
+    Object.values(recorderRefs.current).forEach(recorder => recorder?.stop())
+    Object.entries(wsRefs.current).forEach(([source, ws]) => {
+      if (!ws) return
+      if (sendEnd) {
+        sendEndMessage(source as CaptureSource, ws)
+      }
+      ws.close()
+    })
+    recorderRefs.current = {}
+    wsRefs.current = {}
+  }
 
   const handleRtasrResult = (data: any, target: CaptureTarget) => {
     if (data?.msg_type === 'action' && data?.data?.sessionId) {
@@ -189,17 +203,19 @@ const InterviewMeeting: React.FC = () => {
     queueTranscriptMessages(newMessages)
   }
 
-  const startCapture = (target: CaptureTarget) => {
+  const startCapture = (target: CaptureTarget, runId: number) => {
     const recorder = new BrowserAudioRecorder()
     recorderRefs.current[target.source] = recorder
 
     const ws = createRtasrWebSocket({
       onResult: data => handleRtasrResult(data, target),
       onError: () => {
+        if (runId !== captureRunIdRef.current) return
         appendRecordingStatus(`${target.label} WebSocket 错误`)
         message.error(`${target.label}实时转写连接失败，请检查讯飞配置和网络`)
       },
       onClose: (event) => {
+        if (runId !== captureRunIdRef.current) return
         appendRecordingStatus(`${target.label} closed ${event.code}${event.reason ? ` ${event.reason}` : ''}`)
         if (allCaptureSocketsClosed()) {
           setRecording(false)
@@ -210,6 +226,10 @@ const InterviewMeeting: React.FC = () => {
         }
       },
       onOpen: async () => {
+        if (runId !== captureRunIdRef.current) {
+          ws.close(1000, 'stale-capture')
+          return
+        }
         try {
           appendRecordingStatus(`${target.label}已打开`)
           appendRecordingStatus(`正在请求${target.label}`)
@@ -239,6 +259,7 @@ const InterviewMeeting: React.FC = () => {
           await recorder.start({ sampleRate: 16000, frameSize: 640, source: target.source })
           appendRecordingStatus(`${target.label}已开始`)
         } catch (err: any) {
+          if (runId !== captureRunIdRef.current) return
           const errorMessage = err?.message || (target.source === 'meeting'
             ? '会议音频采集失败，请选择屏幕、窗口或标签页，并开启音频共享。'
             : '麦克风采集失败，请允许麦克风权限。')
@@ -254,6 +275,8 @@ const InterviewMeeting: React.FC = () => {
 
   const handleStart = async () => {
     try {
+      captureRunIdRef.current += 1
+      stopCaptureStreams(false)
       setRecordingStatus('正在连接实时转写')
       frameCountRefs.current = {}
       sessionIdRefs.current = {}
@@ -266,7 +289,8 @@ const InterviewMeeting: React.FC = () => {
         transcriptFlushTimerRef.current = null
       }
       setRecording(true)
-      getCaptureTargets().forEach(startCapture)
+      const runId = captureRunIdRef.current
+      getCaptureTargets().forEach(target => startCapture(target, runId))
     } catch (err: any) {
       setRecording(false)
       setRecordingStatus(err?.message || '启动实时转写失败')
@@ -276,15 +300,11 @@ const InterviewMeeting: React.FC = () => {
   }
 
   const handleStop = () => {
+    captureRunIdRef.current += 1
     setRecording(false)
     appendRecordingStatus('已停止')
     flushPendingTranscript(true)
-    Object.values(recorderRefs.current).forEach(recorder => recorder?.stop())
-    Object.entries(wsRefs.current).forEach(([source, ws]) => {
-      if (!ws) return
-      sendEndMessage(source as CaptureSource, ws)
-      ws.close()
-    })
+    stopCaptureStreams(true)
     cleanupQuestionDetection()
     if (aiDebounceRef.current) {
       window.clearTimeout(aiDebounceRef.current)
@@ -344,6 +364,15 @@ const InterviewMeeting: React.FC = () => {
   }
 
   React.useEffect(() => {
+    useInterviewStore.setState({
+      messages: [],
+      transResults: [],
+      answers: [],
+    })
+    seenTranscriptRef.current.clear()
+    pendingTranscriptRef.current = null
+    setRecordingStatus('未录音')
+
     const handleAnswerCreated = () => {
       appendRecordingStatus('DeepSeek 已回答')
     }
@@ -357,6 +386,7 @@ const InterviewMeeting: React.FC = () => {
     window.addEventListener('deepseek-answer-failed', handleAnswerFailed)
 
     return () => {
+      captureRunIdRef.current += 1
       window.removeEventListener('deepseek-answer-created', handleAnswerCreated)
       window.removeEventListener('deepseek-answer-failed', handleAnswerFailed)
       cleanupQuestionDetection()
@@ -366,8 +396,7 @@ const InterviewMeeting: React.FC = () => {
       if (transcriptFlushTimerRef.current) {
         window.clearTimeout(transcriptFlushTimerRef.current)
       }
-      Object.values(recorderRefs.current).forEach(recorder => recorder?.stop())
-      Object.values(wsRefs.current).forEach(ws => ws?.close())
+      stopCaptureStreams(false)
     }
   }, [])
 
