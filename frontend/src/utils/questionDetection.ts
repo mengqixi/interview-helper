@@ -51,28 +51,17 @@ Task:
 
 const buildTranscriptHistory = (messages: MeetingMessage[], excludeIds: string[] = []) => {
   return messages
-    .filter(message => !excludeIds.includes(message.id))
+    .filter(message => message.role === 'asker' && !excludeIds.includes(message.id))
     .sort((a, b) => a.timestamp - b.timestamp)
-    .slice(-12)
+    .slice(-4)
     .map(message => ({
       role: 'user' as const,
-      content: message.role === 'asker'
-        ? `[interviewer transcript] ${message.content}`
-        : `[candidate transcript / candidate answer] ${message.content}`,
-    }))
-}
-
-const buildPreviousAnswerHistory = (answers: Answer[] = []) => {
-  return answers
-    .sort((a, b) => a.created - b.created)
-    .slice(-2)
-    .map(answer => ({
-      role: 'assistant' as const,
-      content: `[previous AI suggestion]\nQuestion: ${answer.question}\nAnswer: ${answer.message}`,
+      content: `[interviewer transcript] ${message.content}`,
     }))
 }
 
 export const prepareMessagesForAI = (messages: MeetingMessage[], answers: Answer[] = []) => {
+  void answers
   const recentMessages = getRecentMessages(messages, 10 * 60 * 1000, 12)
   const interviewerMessages = recentMessages.filter(message => message.role === 'asker')
   const newMessages = interviewerMessages.filter(message => !message.isAsked)
@@ -90,7 +79,6 @@ export const prepareMessagesForAI = (messages: MeetingMessage[], answers: Answer
 
   const newMessageIds = newMessages.map(message => message.id)
   const transcriptHistory = buildTranscriptHistory(messages, newMessageIds)
-  const previousAnswerHistory = buildPreviousAnswerHistory(answers)
 
   const sortedNewMessages = newMessages
     .sort((a, b) => a.timestamp - b.timestamp)
@@ -103,7 +91,6 @@ export const prepareMessagesForAI = (messages: MeetingMessage[], answers: Answer
     aiMessages: [
       ...stablePrefix,
       ...transcriptHistory,
-      ...previousAnswerHistory,
       ...sortedNewMessages,
     ],
     newMessageIds,
@@ -115,13 +102,13 @@ export const prepareManualQuestionForAI = (
   messages: MeetingMessage[],
   answers: Answer[] = [],
 ) => {
+  void answers
   return [
     {
       role: 'system' as const,
       content: buildStableSystemPrompt(),
     },
     ...buildTranscriptHistory(messages),
-    ...buildPreviousAnswerHistory(answers),
     {
       role: 'user' as const,
       content: `[manual question from candidate]\n${content}`,

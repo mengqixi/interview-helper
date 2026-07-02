@@ -2,12 +2,11 @@ import React, { useRef, useState } from 'react'
 import { message } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
-import { chatWithDeepSeek, handleQuestionDetected } from '@/api/deepseek'
+import { handleQuestionDetected } from '@/api/deepseek'
 import { createRtasrWebSocket, parseRtasrResult, setAudioActiveState, cleanupQuestionDetection } from '@/api/xfyunRtasr'
 import { useInterviewStore } from '@/store/interviewStore'
 import { isAudioActive } from '@/utils/voiceIdentifier'
 import { BrowserAudioRecorder } from '@/utils/browserAudioRecorder'
-import { prepareManualQuestionForAI } from '@/utils/questionDetection'
 
 type AudioSource = 'both' | 'meeting' | 'microphone'
 type CaptureSource = 'meeting' | 'microphone'
@@ -21,7 +20,6 @@ const InterviewMeeting: React.FC = () => {
   const navigate = useNavigate()
   const addTransResult = useInterviewStore(s => s.addTransResult)
   const addMessage = useInterviewStore(s => s.addMessage)
-  const upsertAnswer = useInterviewStore(s => s.upsertAnswer)
   const messages = useInterviewStore(s => s.messages)
   const answers = useInterviewStore(s => s.answers)
   const [recording, setRecording] = useState(false)
@@ -338,33 +336,14 @@ const InterviewMeeting: React.FC = () => {
 
     addMessage({
       content,
-      role: 'user',
+      role: 'asker',
       status: 'sent',
     })
     setManualQuestion('')
     appendRecordingStatus('手动发送给 DeepSeek')
-
-    try {
-      const response = await chatWithDeepSeek(
-        prepareManualQuestionForAI(content, useInterviewStore.getState().messages, useInterviewStore.getState().answers),
-        { stream: false, max_tokens: 700 },
-      )
-      const answer = response.choices?.[0]?.message?.content || ''
-
-      if (!answer) {
-        throw new Error('AI 返回为空')
-      }
-
-      upsertAnswer({
-        id: response.id || `manual-${Date.now()}`,
-        message: answer,
-        created: Date.now(),
-        question: content,
-      })
-    } catch (err: any) {
-      message.error(err?.message || 'AI 请求失败')
-      console.error('Manual question failed:', err)
-    }
+    window.setTimeout(() => {
+      handleQuestionDetected()
+    }, 50)
   }
 
   React.useEffect(() => {
