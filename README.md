@@ -1,303 +1,350 @@
-# AI Interview Helper
+# Interview Helper
 
-AI面试助手是一个基于React的智能面试准备工具，提供实时语音转文字、AI智能回答建议和完整的面试会话管理功能。
+Interview Helper is a local web application for technical interview assistance. It captures live audio, transcribes speech through Xfyun realtime ASR, and asks DeepSeek for concise interview-ready answers.
 
-## ✨ 主要功能
+This fork includes fixes for:
 
-- 🎤 **实时语音转写** - 基于科大讯飞RTasr API的高精度语音识别
-- 🤖 **AI智能回答** - 集成DeepSeek AI提供面试问题的智能回答建议  
-- 💾 **会话持久化** - 完整的面试记录保存和历史回顾
-- 👤 **用户认证** - 基于JWT的安全用户登录系统
-- 🔄 **实时同步** - 前后端实时数据同步和状态管理
+- DeepSeek requests through a backend proxy, avoiding browser CORS issues.
+- Xfyun realtime speech-to-text with APPID, APIKey, and APISecret.
+- Browser-based microphone capture.
+- Browser-based meeting/system audio capture through screen sharing.
+- Automatic interviewer-question detection.
+- Manual question sending to DeepSeek.
+- Candidate/project context injection for more relevant computer science and AI answers.
+- A fixed-height bottom toolbar to avoid layout jumping during recording.
 
-## 🏗️ 技术架构
+## Features
 
-### 前端技术栈
-- **React 19** + TypeScript + Vite
-- **Ant Design** - 企业级UI组件库
-- **Zustand** - 轻量级状态管理
-- **Axios** - HTTP客户端和请求拦截
-- **WebAudio API** - 实时音频处理
+- Realtime transcript panel
+- AI answer panel with Markdown rendering
+- Manual question input
+- Meeting audio mode for Tencent Meeting, Zoom, browser tabs, and other shared-audio sources
+- Microphone mode for local speech testing
+- DeepSeek configuration from the app settings page
+- Xfyun realtime ASR configuration from the app settings page
+- Login and session APIs backed by FastAPI, PostgreSQL, and Redis
 
-### 后端技术栈
-- **FastAPI** - 高性能Python Web框架
-- **PostgreSQL** - 关系型数据库
-- **Redis** - 缓存和会话存储
-- **JWT** - 用户认证和授权
-- **SQLAlchemy** - ORM数据库操作
+## Tech Stack
 
-## 🚀 快速开始
+Frontend:
 
-### 环境要求
+- React 19
+- TypeScript
+- Vite
+- Ant Design
+- Zustand
+- Web Audio API
 
-- Node.js 16+
-- Python 3.9+
-- PostgreSQL 17+ (推荐Docker)
-- Redis 7+ (推荐Docker)
+Backend:
 
-### 1. 使用Docker启动（推荐）
+- FastAPI
+- PostgreSQL
+- Redis
+- SQLAlchemy
+- JWT authentication
+- httpx proxy for DeepSeek-compatible chat completion APIs
 
-#### 方法一：一键启动所有服务（推荐）
+External services:
+
+- DeepSeek Chat API
+- Xfyun realtime speech-to-text large model WebSocket API
+
+## Quick Start With Docker
+
+The easiest way to run the full application is:
+
 ```bash
-# 启动生产环境
-chmod +x scripts/docker-start.sh
-./scripts/docker-start.sh
-
-# 或启动开发环境（支持代码热重载）
-chmod +x scripts/dev-start.sh
-./scripts/dev-start.sh
+docker compose -f docker-compose.full.yml up --build -d
 ```
 
-#### 方法二：使用docker-compose
-```bash
-# 生产环境
-docker-compose up --build -d
+Default services:
 
-# 开发环境
-docker-compose -f docker-compose.dev.yml up --build -d
+| Service | URL / Port |
+| --- | --- |
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:9000 |
+| Backend Swagger | http://localhost:9000/docs |
+| PostgreSQL | localhost:5462 |
+| Redis | localhost:6389 |
+
+Check containers:
+
+```bash
+docker ps
 ```
 
-#### 方法三：单独启动数据库服务
-```bash
-# PostgreSQL
-docker run --name postgres-ai-interview \
-  -e POSTGRES_PASSWORD=root \
-  -p 5432:5432 \
-  -d postgres:17.5
+Restart after code changes:
 
-# Redis  
-docker run --name redis-ai-interview \
-  -p 6379:6379 \
-  -d redis:7.4-alpine
+```bash
+docker restart ai-interview-backend-full ai-interview-frontend-full
 ```
 
-### 2. 传统方式启动后端（可选）
+View logs:
 
-> 💡 **推荐使用上面的Docker方式启动，可避免环境配置问题**
+```bash
+docker logs -f ai-interview-backend-full
+docker logs -f ai-interview-frontend-full
+```
 
-#### Linux/macOS/WSL环境:
+## Default Account
+
+The project includes a default test account in the original setup scripts:
+
+```text
+username: test
+password: test1234
+```
+
+If the account does not exist in your database, run the backend initialization script inside the backend container or register a new account from the app.
+
+## App Configuration
+
+Open:
+
+```text
+http://localhost:5173/settings
+```
+
+Configure the following providers in the UI.
+
+### DeepSeek
+
+Recommended values:
+
+```text
+API Key: your DeepSeek API key
+API Base URL: https://api.deepseek.com
+Model: deepseek-chat
+Temperature: 0.3 to 0.7
+Max Tokens: 2000
+```
+
+DeepSeek requests are sent to:
+
+```text
+Frontend -> Backend /api/ai/chat/completions -> DeepSeek API
+```
+
+This keeps the browser from calling DeepSeek directly and avoids CORS problems.
+
+### Xfyun Realtime ASR
+
+Use the Xfyun realtime speech-to-text large model service.
+
+Console page:
+
+```text
+https://console.xfyun.cn/services/new_rta
+```
+
+Required fields:
+
+```text
+APPID
+APIKey
+APISecret
+```
+
+The application uses the WebSocket endpoint:
+
+```text
+wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1
+```
+
+Do not commit real API keys to this repository. Store them through the app settings page or local environment variables only.
+
+## Using Meeting Audio
+
+For online interviews, use `Meeting audio` mode.
+
+1. Open the interview page.
+2. Select `Meeting audio` in the bottom toolbar.
+3. Click `Start interview`.
+4. The browser will ask you to share a screen, window, or tab.
+5. Choose the source that contains the meeting audio.
+6. Enable audio sharing in the browser sharing dialog.
+7. Start speaking or let the interviewer speak.
+
+Notes:
+
+- In Chromium-based browsers, tab audio sharing is usually the most reliable option.
+- Some desktop meeting apps may not expose audio to browser screen capture on all systems.
+- If meeting audio is unavailable, try joining the meeting in a browser tab and sharing that tab.
+- Use `Microphone` mode to test whether ASR and DeepSeek work without meeting audio.
+
+## Interview Flow
+
+1. Log in.
+2. Create or open an interview.
+3. Configure role, language, and region.
+4. Select `Meeting audio` or `Microphone`.
+5. Click `Start interview`.
+6. The right panel shows live transcript messages.
+7. Interviewer messages can trigger DeepSeek automatically.
+8. You can also type a question manually and click `Send`.
+9. Answers appear in the main panel.
+
+## Candidate Context
+
+This fork includes a local candidate context file:
+
+```text
+frontend/src/data/candidateContext.ts
+```
+
+It helps DeepSeek answer questions about the candidate's resume and projects, including:
+
+- Password Attack Detection and Privacy-Preserving Training Platform
+- CrossNotify cross-device instant notification system
+
+The context intentionally avoids private contact details such as phone number and email.
+
+To customize it, edit the file and rebuild/restart the frontend:
+
+```bash
+docker exec ai-interview-frontend-full npm run build
+docker restart ai-interview-frontend-full
+```
+
+## Local Development
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Build:
+
+```bash
+cd frontend
+npm run build
+```
+
+### Backend
+
 ```bash
 cd backend
-chmod +x setup.sh
-./setup.sh  # 自动创建.env配置文件
+pip install -r requirements.txt
 python run_server.py
 ```
 
-#### Windows环境:
+For Windows-specific startup:
+
 ```bash
 cd backend
-python test_connection.py  # 测试数据库连接
-python run_server_windows.py  # Windows专用启动脚本
+python run_server_windows.py
 ```
 
-### 3. 前端启动
+## Environment Variables
 
-#### 方法一：使用自动化脚本 (推荐)
-```bash
-cd frontend
-chmod +x setup.sh
-./setup.sh  # 自动创建.env配置文件
-npm run dev
-```
+Backend example:
 
-#### 方法二：手动安装
-```bash
-# 进入前端目录
-cd frontend
-
-# 复制环境变量模板
-cp .env.example .env
-
-# 安装依赖
-npm install
-
-# 启动开发服务器 (运行在 http://localhost:5173)
-npm run dev
-```
-
-### 4. 默认测试账户
-
-- **用户名**: `test`
-- **密码**: `test1234`
-- **邮箱**: `test@example.com`
-
-### 5. API密钥配置
-
-使用前需要配置API密钥（在应用内设置）：
-
-1. **DeepSeek AI API**: 在应用的API配置页面填入密钥
-2. **科大讯飞语音API**: 在应用的语音设置页面配置APPID和APIKEY
-
-> 💡 **安全提示**: 所有API密钥都通过应用内界面配置，不会硬编码在代码中
-
-## 📁 项目结构
-
-```
-ai-interview-helper-react/
-├── frontend/                 # React前端应用
-│   ├── src/
-│   │   ├── api/             # API接口封装
-│   │   ├── components/      # 可复用组件
-│   │   ├── pages/           # 页面组件
-│   │   ├── store/           # Zustand状态管理
-│   │   └── utils/           # 工具函数
-│   └── public/
-├── backend/                  # FastAPI后端应用
-│   ├── app/
-│   │   ├── models.py        # 数据库模型
-│   │   ├── schemas.py       # Pydantic模型
-│   │   ├── auth.py          # 认证逻辑
-│   │   └── routers/         # API路由
-│   ├── main.py              # 应用入口
-│   └── requirements.txt     # Python依赖
-└── memory-bank/             # 项目文档和上下文
-```
-
-## 🔧 配置说明
-
-### 环境变量配置
-
-**后端配置** (backend/.env):
 ```env
-DATABASE_URL=postgresql://postgres:root@localhost:5432/ai_interview_helper
-REDIS_URL=redis://localhost:6379
-SECRET_KEY=your-secret-key-change-this-in-production
+DATABASE_URL=postgresql://postgres:root@localhost:5462/ai_interview_helper
+REDIS_URL=redis://localhost:6389
+SECRET_KEY=change-this-in-production
+ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
+CORS_ORIGINS=["http://localhost:5173", "http://localhost:3000"]
 ```
 
-**前端配置** (frontend/.env):
+Frontend example:
+
 ```env
 VITE_API_BASE_URL=http://localhost:9000
 ```
 
-### API密钥申请
+Optional Xfyun variables are supported, but using the settings page is recommended:
 
-1. **科大讯飞语音转写API** - 申请地址：https://www.xfyun.cn/
-2. **DeepSeek AI API** - 申请地址：https://platform.deepseek.com/
-
-申请后在应用内设置页面配置，不需要修改代码文件。
-
-## 📊 API文档
-
-后端启动后可访问自动生成的API文档：
-- **Swagger UI**: http://localhost:9000/docs
-- **ReDoc**: http://localhost:9000/redoc
-
-### 主要API端点
-
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/health` | GET | 健康检查 |
-| `/api/auth/login` | POST | 用户登录 |
-| `/api/auth/register` | POST | 用户注册 |
-| `/api/auth/me` | GET | 获取当前用户 |
-| `/api/sessions/` | GET/POST | 会话管理 |
-| `/api/sessions/{id}/messages` | GET/POST | 消息管理 |
-
-## 🛠️ 开发命令
-
-### Docker开发（推荐）
-
-```bash
-# 启动开发环境
-./scripts/dev-start.sh
-
-# 查看日志
-./scripts/docker-logs.sh
-
-# 查看特定服务日志
-./scripts/docker-logs.sh backend
-./scripts/docker-logs.sh postgres
-
-# 重启服务
-./scripts/docker-restart.sh
-
-# 停止服务
-./scripts/docker-stop.sh
-
-# 进入后端容器调试
-docker-compose -f docker-compose.dev.yml exec backend bash
+```env
+VITE_XFYUN_APPID=your_app_id
+VITE_XFYUN_API_KEY=your_api_key
+VITE_XFYUN_API_SECRET=your_api_secret
 ```
 
-### 前端开发
-```bash
-cd frontend
-npm run dev      # 启动开发服务器
-npm run build    # 构建生产版本
-npm run lint     # 代码检查
-npm run preview  # 预览构建结果
+## API Endpoints
+
+Main endpoints:
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| GET | `/health` | Backend health check |
+| POST | `/api/auth/login` | Login |
+| POST | `/api/auth/register` | Register |
+| GET | `/api/auth/me` | Current user |
+| GET/POST | `/api/sessions/` | Interview sessions |
+| GET/POST | `/api/sessions/{id}/messages` | Session messages |
+| POST | `/api/ai/chat/completions` | DeepSeek-compatible chat completion proxy |
+
+API docs:
+
+```text
+http://localhost:9000/docs
+http://localhost:9000/redoc
 ```
 
-### 传统后端开发
+## Troubleshooting
 
-**Linux/macOS/WSL**:
-```bash
-cd backend
-source venv/bin/activate
-python run_server.py          # 启动开发服务器
-python init_default_user.py   # 重置默认用户
-python test_db.py             # 测试数据库连接
-```
+### DeepSeek does not answer
 
-**Windows**:
-```bash
-cd backend
-venv\Scripts\activate
-python run_server_windows.py  # Windows专用启动脚本
-python test_connection.py     # 测试数据库连接
-python init_default_user.py   # 重置默认用户
-```
+Check:
 
-### Docker管理命令
+- DeepSeek API key is configured in Settings.
+- Base URL is `https://api.deepseek.com`.
+- Backend is running on port `9000`.
+- Browser can reach `http://localhost:9000/health`.
+- Backend logs do not show upstream API errors.
+
+Useful commands:
 
 ```bash
-# 查看容器状态
-docker-compose ps
-
-# 查看实时日志
-docker-compose logs -f
-
-# 重新构建并启动
-docker-compose up --build -d
-
-# 停止并删除容器
-docker-compose down
-
-# 清理所有数据（谨慎使用）
-docker-compose down -v
+docker logs -f ai-interview-backend-full
+docker restart ai-interview-backend-full
 ```
 
-## 📈 版本路线图
+### Realtime transcript stops after a few seconds
 
-- ✅ **v0.1** - 基础前端UI和语音转写功能
-- ✅ **v0.2** - AI回答功能和实时对话体验
-- ✅ **v0.3** - 后端架构和数据持久化
-- 🔄 **v0.4** - 多模型支持和API配置管理
-- 📋 **v0.5** - 完善用户系统和登录页面
+Check:
 
-## 🤝 贡献指南
+- Xfyun APPID, APIKey, and APISecret are from the `new_rta` service page.
+- You have remaining service time or quota in the Xfyun console.
+- Browser microphone or screen audio permission is granted.
+- For meeting audio, audio sharing was enabled in the screen-share dialog.
+- Try `Microphone` mode first to isolate ASR configuration from meeting-audio capture.
 
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
-6. 加我WeChat: JarvanJason 一起贡献
+### Meeting audio is silent
 
-## 📄 许可证
+Try:
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+- Join the meeting from a browser tab, then share that tab with audio.
+- Use Chrome or Edge.
+- Verify system audio is not muted.
+- Switch from `Meeting audio` to `Microphone` to verify ASR still works.
 
-## 🙏 致谢
+### Bottom toolbar jumps or resizes
 
-- 科大讯飞提供优秀的语音识别API
-- DeepSeek提供强大的AI模型支持
-- Ant Design提供优雅的UI组件库
-- 面试狗提供UI灵感
+This fork fixes the toolbar height and truncates long status text. If it still jumps, hard refresh the browser after rebuilding:
 
-## 正在解决的问题
-触发AI提问的时机难以控制, 准确率低, 需要帮忙改进
+```text
+Ctrl + F5
+```
 
-## 使用截图
-![](./public/tutorial1.png)
-![](./public/turorial2.png)
+## Security Notes
+
+- Do not commit real DeepSeek or Xfyun keys.
+- Rotate keys if they were ever pasted into public logs or commits.
+- The backend AI proxy currently accepts API keys from the frontend request body. This is convenient for local use, but for production deployment you should move provider keys to backend environment variables and enforce user-level authorization.
+- Change `SECRET_KEY` before any production deployment.
+
+## Repository
+
+```text
+https://github.com/mengqixi/interview-helper
+```
+
+## License
+
+This project follows the license of the upstream project unless changed by the repository owner.
