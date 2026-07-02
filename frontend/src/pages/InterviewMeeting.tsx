@@ -31,6 +31,11 @@ const InterviewMeeting: React.FC = () => {
   const sessionIdRef = useRef<string | null>(null)
   const aiDebounceRef = useRef<number | null>(null)
   const seenTranscriptRef = useRef<Set<string>>(new Set())
+  const transcriptFlushTimerRef = useRef<number | null>(null)
+  const pendingTranscriptRef = useRef<{
+    role: 'user' | 'asker'
+    content: string
+  } | null>(null)
 
   const appendRecordingStatus = (status: string) => {
     setRecordingStatus(previous => `${previous} -> ${status}`)
@@ -45,6 +50,64 @@ const InterviewMeeting: React.FC = () => {
       handleQuestionDetected()
       aiDebounceRef.current = null
     }, 1500)
+  }
+
+  const flushPendingTranscript = (triggerAI = true) => {
+    if (transcriptFlushTimerRef.current) {
+      window.clearTimeout(transcriptFlushTimerRef.current)
+      transcriptFlushTimerRef.current = null
+    }
+
+    const pending = pendingTranscriptRef.current
+    pendingTranscriptRef.current = null
+
+    if (!pending?.content.trim()) {
+      return
+    }
+
+    addMessage({
+      content: pending.content.trim(),
+      role: pending.role,
+      status: 'sent',
+    })
+
+    if (triggerAI && pending.role === 'asker') {
+      appendRecordingStatus('sending to DeepSeek')
+      window.setTimeout(() => {
+        handleQuestionDetected()
+      }, 50)
+    }
+  }
+
+  const queueTranscriptMessages = (newMessages: Array<{ content: string; role: 'user' | 'asker' }>) => {
+    newMessages.forEach((msg) => {
+      const content = msg.content.trim()
+      if (!content) return
+
+      const pending = pendingTranscriptRef.current
+      if (!pending || pending.role !== msg.role) {
+        flushPendingTranscript(msg.role === 'asker')
+        pendingTranscriptRef.current = {
+          role: msg.role,
+          content,
+        }
+        return
+      }
+
+      if (content.startsWith(pending.content)) {
+        pending.content = content
+      } else if (!pending.content.includes(content)) {
+        pending.content = `${pending.content}${/[,.?!]$/.test(pending.content) ? '' : ' '}${content}`
+      }
+    })
+
+    if (transcriptFlushTimerRef.current) {
+      window.clearTimeout(transcriptFlushTimerRef.current)
+    }
+
+    transcriptFlushTimerRef.current = window.setTimeout(() => {
+      flushPendingTranscript(true)
+    }, 1800)
   }
 
   const handleRtasrResult = (data: any) => {
@@ -93,11 +156,7 @@ const InterviewMeeting: React.FC = () => {
       return true
     })
 
-    newMessages.forEach(msg => addMessage(msg))
-
-    if (newMessages.some(msg => msg.role === 'asker')) {
-      scheduleQuestionDetection()
-    }
+    queueTranscriptMessages(newMessages)
   }
 
   const handleStart = async () => {
@@ -106,6 +165,11 @@ const InterviewMeeting: React.FC = () => {
       frameCountRef.current = 0
       sessionIdRef.current = null
       seenTranscriptRef.current.clear()
+      pendingTranscriptRef.current = null
+      if (transcriptFlushTimerRef.current) {
+        window.clearTimeout(transcriptFlushTimerRef.current)
+        transcriptFlushTimerRef.current = null
+      }
       setRecording(true)
       const recorder = new BrowserAudioRecorder()
       recorderRef.current = recorder
@@ -176,6 +240,7 @@ const InterviewMeeting: React.FC = () => {
   const handleStop = () => {
     setRecording(false)
     appendRecordingStatus('stopped')
+    flushPendingTranscript(true)
     recorderRef.current?.stop()
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(sessionIdRef.current ? { end: true, sessionId: sessionIdRef.current } : { end: true }))
@@ -186,6 +251,23 @@ const InterviewMeeting: React.FC = () => {
       window.clearTimeout(aiDebounceRef.current)
       aiDebounceRef.current = null
     }
+  }
+
+  const handleSendInterviewerNow = () => {
+    const hasPendingInterviewer = pendingTranscriptRef.current?.role === 'asker'
+      && Boolean(pendingTranscriptRef.current.content.trim())
+    const hasUnsentInterviewer = messages.some(msg => msg.role === 'asker' && !msg.isAsked)
+
+    if (!hasPendingInterviewer && !hasUnsentInterviewer) {
+      appendRecordingStatus('no unsent interviewer text')
+      return
+    }
+
+    flushPendingTranscript(false)
+    appendRecordingStatus('manual send to DeepSeek')
+    window.setTimeout(() => {
+      handleQuestionDetected()
+    }, 80)
   }
 
   const handleManualSend = async () => {
@@ -229,10 +311,27 @@ const InterviewMeeting: React.FC = () => {
   }
 
   React.useEffect(() => {
+    const handleAnswerCreated = () => {
+      appendRecordingStatus('DeepSeek answered')
+    }
+
+    const handleAnswerFailed = (event: Event) => {
+      const detail = (event as CustomEvent<{ reason?: string }>).detail
+      appendRecordingStatus(`DeepSeek failed${detail?.reason ? `: ${detail.reason}` : ''}`)
+    }
+
+    window.addEventListener('deepseek-answer-created', handleAnswerCreated)
+    window.addEventListener('deepseek-answer-failed', handleAnswerFailed)
+
     return () => {
+      window.removeEventListener('deepseek-answer-created', handleAnswerCreated)
+      window.removeEventListener('deepseek-answer-failed', handleAnswerFailed)
       cleanupQuestionDetection()
       if (aiDebounceRef.current) {
         window.clearTimeout(aiDebounceRef.current)
+      }
+      if (transcriptFlushTimerRef.current) {
+        window.clearTimeout(transcriptFlushTimerRef.current)
       }
       recorderRef.current?.stop()
       wsRef.current?.close()
@@ -351,6 +450,12 @@ const InterviewMeeting: React.FC = () => {
           </select>
           <button style={{ width: 104, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
             Custom prompt
+          </button>
+          <button
+            style={{ width: 128, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
+            onClick={handleSendInterviewerNow}
+          >
+            Send interviewer
           </button>
           <button style={{ width: 72, height: 40, padding: '0 12px', border: '1px solid #d9d9d9', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
             Notes

@@ -186,8 +186,14 @@ export const handleQuestionDetected = async () => {
     })
 
     markMessagesAsAsked(newMessageIds)
+    window.dispatchEvent(new CustomEvent('deepseek-answer-created', {
+      detail: { questionCount: newMessageIds.length },
+    }))
   } catch (err: any) {
     const reason = err?.message || 'AI request failed'
+    window.dispatchEvent(new CustomEvent('deepseek-answer-failed', {
+      detail: { reason },
+    }))
     antdMessage.error(reason)
     console.error('DeepSeek API Error:', err)
   }
