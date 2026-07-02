@@ -81,6 +81,9 @@ const buildRequestBody = (
   }
 }
 
+let questionRequestInFlight = false
+let questionRequestQueued = false
+
 export const chatWithDeepSeek = async (
   messages: DeepSeekRequest['messages'],
   options?: {
@@ -159,16 +162,23 @@ export const streamChatWithDeepSeek = async (
 }
 
 export const handleQuestionDetected = async () => {
-  const store = useInterviewStore.getState()
-  const { upsertAnswer, markMessagesAsAsked, messages, answers } = store
-  const { prepareMessagesForAI } = await import('../utils/questionDetection')
-  const { aiMessages, newMessageIds } = prepareMessagesForAI(messages, answers)
-
-  if (aiMessages.length === 0 || newMessageIds.length === 0) {
+  if (questionRequestInFlight) {
+    questionRequestQueued = true
     return
   }
 
+  questionRequestInFlight = true
+
   try {
+    const store = useInterviewStore.getState()
+    const { upsertAnswer, markMessagesAsAsked, messages, answers } = store
+    const { prepareMessagesForAI } = await import('../utils/questionDetection')
+    const { aiMessages, newMessageIds } = prepareMessagesForAI(messages, answers)
+
+    if (aiMessages.length === 0 || newMessageIds.length === 0) {
+      return
+    }
+
     const response = await chatWithDeepSeek(aiMessages, { stream: false })
     const answer = response.choices?.[0]?.message?.content || ''
 
@@ -196,6 +206,14 @@ export const handleQuestionDetected = async () => {
     }))
     antdMessage.error(reason)
     console.error('DeepSeek API Error:', err)
+  } finally {
+    questionRequestInFlight = false
+    if (questionRequestQueued) {
+      questionRequestQueued = false
+      window.setTimeout(() => {
+        handleQuestionDetected()
+      }, 0)
+    }
   }
 }
 

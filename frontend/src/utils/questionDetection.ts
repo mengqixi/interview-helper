@@ -49,7 +49,7 @@ const buildTranscriptHistory = (messages: MeetingMessage[], excludeIds: string[]
   return messages
     .filter(message => !excludeIds.includes(message.id))
     .sort((a, b) => a.timestamp - b.timestamp)
-    .slice(-120)
+    .slice(-40)
     .map(message => ({
       role: 'user' as const,
       content: message.role === 'asker'
@@ -61,7 +61,7 @@ const buildTranscriptHistory = (messages: MeetingMessage[], excludeIds: string[]
 const buildPreviousAnswerHistory = (answers: Answer[] = []) => {
   return answers
     .sort((a, b) => a.created - b.created)
-    .slice(-20)
+    .slice(-6)
     .map(answer => ({
       role: 'assistant' as const,
       content: `[previous AI suggestion]\nQuestion: ${answer.question}\nAnswer: ${answer.message}`,
@@ -69,7 +69,7 @@ const buildPreviousAnswerHistory = (answers: Answer[] = []) => {
 }
 
 export const prepareMessagesForAI = (messages: MeetingMessage[], answers: Answer[] = []) => {
-  const recentMessages = getRecentMessages(messages, 10 * 60 * 1000, 120)
+  const recentMessages = getRecentMessages(messages, 10 * 60 * 1000, 40)
   const interviewerMessages = recentMessages.filter(message => message.role === 'asker')
   const newMessages = interviewerMessages.filter(message => !message.isAsked)
 

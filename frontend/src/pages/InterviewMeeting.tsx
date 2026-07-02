@@ -110,11 +110,14 @@ const InterviewMeeting: React.FC = () => {
 
     if (transcriptFlushTimerRef.current) {
       window.clearTimeout(transcriptFlushTimerRef.current)
+      transcriptFlushTimerRef.current = null
     }
 
-    transcriptFlushTimerRef.current = window.setTimeout(() => {
-      flushPendingTranscript(true)
-    }, 800)
+    if (pendingTranscriptRef.current?.role === 'asker') {
+      transcriptFlushTimerRef.current = window.setTimeout(() => {
+        flushPendingTranscript(true)
+      }, 1200)
+    }
   }
 
   const getCaptureTargets = (): CaptureTarget[] => {
@@ -339,6 +342,7 @@ const InterviewMeeting: React.FC = () => {
       status: 'sent',
     })
     setManualQuestion('')
+    appendRecordingStatus('手动发送给 DeepSeek')
 
     try {
       const response = await chatWithDeepSeek(
