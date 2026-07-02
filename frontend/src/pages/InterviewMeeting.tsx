@@ -7,7 +7,7 @@ import { createRtasrWebSocket, parseRtasrResult, setAudioActiveState, cleanupQue
 import { useInterviewStore } from '@/store/interviewStore'
 import { isAudioActive } from '@/utils/voiceIdentifier'
 import { BrowserAudioRecorder } from '@/utils/browserAudioRecorder'
-import { buildStableSystemPrompt } from '@/utils/questionDetection'
+import { prepareManualQuestionForAI } from '@/utils/questionDetection'
 
 type AudioSource = 'meeting' | 'microphone'
 
@@ -282,16 +282,10 @@ const InterviewMeeting: React.FC = () => {
     setManualQuestion('')
 
     try {
-      const response = await chatWithDeepSeek([
-        {
-          role: 'system',
-          content: buildStableSystemPrompt(),
-        },
-        {
-          role: 'user',
-          content,
-        },
-      ], { stream: false })
+      const response = await chatWithDeepSeek(
+        prepareManualQuestionForAI(content, useInterviewStore.getState().messages, useInterviewStore.getState().answers),
+        { stream: false },
+      )
       const answer = response.choices?.[0]?.message?.content || ''
 
       if (!answer) {

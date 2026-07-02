@@ -160,9 +160,9 @@ export const streamChatWithDeepSeek = async (
 
 export const handleQuestionDetected = async () => {
   const store = useInterviewStore.getState()
-  const { upsertAnswer, markMessagesAsAsked, messages } = store
+  const { upsertAnswer, markMessagesAsAsked, messages, answers } = store
   const { prepareMessagesForAI } = await import('../utils/questionDetection')
-  const { aiMessages, newMessageIds } = prepareMessagesForAI(messages)
+  const { aiMessages, newMessageIds } = prepareMessagesForAI(messages, answers)
 
   if (aiMessages.length === 0 || newMessageIds.length === 0) {
     return

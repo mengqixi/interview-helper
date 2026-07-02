@@ -1,5 +1,5 @@
 import { CANDIDATE_CONTEXT } from '@/data/candidateContext'
-import type { MeetingMessage } from '../store/interviewStore'
+import type { Answer, MeetingMessage } from '../store/interviewStore'
 
 export const getRecentMessages = (
   messages: MeetingMessage[],
@@ -41,13 +41,36 @@ Task:
 - Keep the answer concise enough to speak in an interview: usually 3-6 bullet points or one short structured paragraph.
 - If the transcript is noise or not a question, do not invent a long answer; provide a short clarification or the most likely interview-oriented response.
 - Use the candidate context naturally when it helps, especially for project, resume, AI engineering, backend, security, networking, mobile, or realtime communication questions.
+- Use the conversation history to understand what the interviewer already asked, what the candidate already answered, and what AI suggestions were already given. Do not repeat old answers unless the newest question asks for refinement.
 - Do not reveal private contact details.`
 }
 
-export const prepareMessagesForAI = (messages: MeetingMessage[]) => {
-  const recentMessages = getRecentMessages(messages)
+const buildTranscriptHistory = (messages: MeetingMessage[], excludeIds: string[] = []) => {
+  return messages
+    .filter(message => !excludeIds.includes(message.id))
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-120)
+    .map(message => ({
+      role: 'user' as const,
+      content: message.role === 'asker'
+        ? `[interviewer transcript] ${message.content}`
+        : `[candidate transcript / candidate answer] ${message.content}`,
+    }))
+}
+
+const buildPreviousAnswerHistory = (answers: Answer[] = []) => {
+  return answers
+    .sort((a, b) => a.created - b.created)
+    .slice(-20)
+    .map(answer => ({
+      role: 'assistant' as const,
+      content: `[previous AI suggestion]\nQuestion: ${answer.question}\nAnswer: ${answer.message}`,
+    }))
+}
+
+export const prepareMessagesForAI = (messages: MeetingMessage[], answers: Answer[] = []) => {
+  const recentMessages = getRecentMessages(messages, 10 * 60 * 1000, 120)
   const interviewerMessages = recentMessages.filter(message => message.role === 'asker')
-  const askedMessages = interviewerMessages.filter(message => message.isAsked)
   const newMessages = interviewerMessages.filter(message => !message.isAsked)
 
   if (newMessages.length === 0) {
@@ -61,12 +84,9 @@ export const prepareMessagesForAI = (messages: MeetingMessage[]) => {
     },
   ]
 
-  const sortedAskedMessages = askedMessages
-    .sort((a, b) => a.timestamp - b.timestamp)
-    .map(message => ({
-      role: 'user' as const,
-      content: `[already answered interviewer question] ${message.content}`,
-    }))
+  const newMessageIds = newMessages.map(message => message.id)
+  const transcriptHistory = buildTranscriptHistory(messages, newMessageIds)
+  const previousAnswerHistory = buildPreviousAnswerHistory(answers)
 
   const sortedNewMessages = newMessages
     .sort((a, b) => a.timestamp - b.timestamp)
@@ -78,11 +98,31 @@ export const prepareMessagesForAI = (messages: MeetingMessage[]) => {
   return {
     aiMessages: [
       ...stablePrefix,
-      ...sortedAskedMessages,
+      ...transcriptHistory,
+      ...previousAnswerHistory,
       ...sortedNewMessages,
     ],
-    newMessageIds: newMessages.map(message => message.id),
+    newMessageIds,
   }
+}
+
+export const prepareManualQuestionForAI = (
+  content: string,
+  messages: MeetingMessage[],
+  answers: Answer[] = [],
+) => {
+  return [
+    {
+      role: 'system' as const,
+      content: buildStableSystemPrompt(),
+    },
+    ...buildTranscriptHistory(messages),
+    ...buildPreviousAnswerHistory(answers),
+    {
+      role: 'user' as const,
+      content: `[manual question from candidate]\n${content}`,
+    },
+  ]
 }
 
 let silenceStartTime: number | null = null
