@@ -1,8 +1,6 @@
 import { CANDIDATE_CONTEXT } from '@/data/candidateContext'
 import type { Answer, MeetingMessage } from '../store/interviewStore'
 
-const COMPACT_CANDIDATE_CONTEXT = CANDIDATE_CONTEXT.slice(0, 2600)
-
 export const getRecentMessages = (
   messages: MeetingMessage[],
   timeWindow = 30000,
@@ -33,7 +31,7 @@ Interview context:
 - Answer language/region: ${region}
 
 Candidate context:
-${COMPACT_CANDIDATE_CONTEXT}
+${CANDIDATE_CONTEXT}
 
 Task:
 - Detect the newest interviewer question from the latest transcript messages.
