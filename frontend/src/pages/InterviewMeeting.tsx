@@ -26,6 +26,7 @@ const InterviewMeeting: React.FC = () => {
   const [audioActive, setAudioActive] = useState(false)
   const [manualQuestion, setManualQuestion] = useState('')
   const [recordingStatus, setRecordingStatus] = useState('未录音')
+  const [pinCurrentAnswer, setPinCurrentAnswer] = useState(false)
   const [audioSource, setAudioSource] = useState<AudioSource>('both')
   const wsRefs = useRef<Partial<Record<CaptureSource, WebSocket>>>({})
   const recorderRefs = useRef<Partial<Record<CaptureSource, BrowserAudioRecorder>>>({})
@@ -37,6 +38,7 @@ const InterviewMeeting: React.FC = () => {
   const seenTranscriptRef = useRef<Set<string>>(new Set())
   const transcriptFlushTimerRef = useRef<number | null>(null)
   const captureRunIdRef = useRef(0)
+  const previousAnswerCountRef = useRef(0)
   const pendingTranscriptRef = useRef<{
     role: 'user' | 'asker'
     content: string
@@ -384,10 +386,13 @@ const InterviewMeeting: React.FC = () => {
   }, [])
 
   React.useEffect(() => {
-    if (chatAreaRef.current) {
+    const hasNewAnswer = answers.length > previousAnswerCountRef.current
+    previousAnswerCountRef.current = answers.length
+
+    if (!pinCurrentAnswer && hasNewAnswer && chatAreaRef.current) {
       chatAreaRef.current.scrollTop = chatAreaRef.current.scrollHeight
     }
-  }, [answers])
+  }, [answers, pinCurrentAnswer])
 
   React.useEffect(() => {
     if (voiceContentRef.current) {
@@ -461,7 +466,11 @@ const InterviewMeeting: React.FC = () => {
             {recordingStatus}
           </span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-            <input type="checkbox" />
+            <input
+              type="checkbox"
+              checked={pinCurrentAnswer}
+              onChange={(event) => setPinCurrentAnswer(event.target.checked)}
+            />
             固定当前答案
           </label>
         </div>
